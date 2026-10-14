@@ -73,6 +73,8 @@ public class KafkaEventBus implements EventBus {
         p.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, StringSerializer.class.getName());
         p.put(ProducerConfig.ACKS_CONFIG, "1");
         p.put(ProducerConfig.LINGER_MS_CONFIG, "5");
+        // if Kafka is unreachable, fail the send after 5s instead of the 60s default that would stall the access threads
+        p.put(ProducerConfig.MAX_BLOCK_MS_CONFIG, "5000");
         producer = new KafkaProducer<>(p);
     }
 

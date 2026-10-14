@@ -88,6 +88,7 @@ password = {deviceSecret}      # 设备密钥本身；也可以用它的 HMAC-SH
 
 - [docs/protocol.md](docs/protocol.md)：设备接入协议
 - [docs/api.md](docs/api.md)：REST / WebSocket API
+- [docs/message-lifecycle.md](docs/message-lifecycle.md)：消息上行与下行的完整生命周期（Kafka、EMQX、数据库各管什么）
 - [docs/device-lifecycle.md](docs/device-lifecycle.md)：设备认证、上线下线流程、队列设计
 - [docs/architecture.md](docs/architecture.md)：设计说明（消息流、状态机、一致性取舍、已知限制）
 - [docs/deployment.md](docs/deployment.md)：配置项、PostgreSQL / EMQX / Kafka 部署、TLS、监控、安全清单
