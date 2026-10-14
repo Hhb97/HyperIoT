@@ -83,7 +83,9 @@ java -jar hyperiot-server-0.1.0-SNAPSHOT.jar --spring.profiles.active=prod
 
 **④ 上线 / 下线事件**：平台订阅 `$SYS/brokers/+/clients/+/connected|disconnected` 得到设备在线状态，EMQX 的系统主题事件需要开启（5.x 默认开启）。
 
-**⑤ 验证**：
+**⑤（推荐）对账用的 API 密钥**：Dashboard → 管理 → **API 密钥** → 新建，把 Key 和 Secret 填到平台的 `hyperiot.mqtt.emqx-api.url / key / secret`（环境变量 `HYPERIOT_MQTT_EMQXAPI_URL / _KEY / _SECRET`）。平台据此定期核对 EMQX 实际连接的设备，修复因事件丢失而错误的在线 / 离线状态，见 [device-lifecycle.md](device-lifecycle.md) §2.4。不配置也能工作，只是少了这层保护。
+
+**⑥ 验证**：
 1. 平台日志出现 `Connected to external MQTT broker …` 和 `Subscribed to $share/hyperiot/hyperiot/#`。
 2. 在控制台创建产品和设备，用 MQTTX 等客户端连接（clientId / 用户名 / 密码规则见 `protocol.md` §1，密码直接填设备密钥）。
 3. 设备连上后控制台显示“在线”，向 `hyperiot/{productKey}/{deviceName}/thing/property/post` 发布属性能在设备详情里看到。

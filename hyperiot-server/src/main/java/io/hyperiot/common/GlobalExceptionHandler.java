@@ -14,6 +14,7 @@ import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.multipart.MaxUploadSizeExceededException;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 import java.util.Map;
 import java.util.stream.Collectors;
@@ -55,6 +56,12 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(MaxUploadSizeExceededException.class)
     public ResponseEntity<Map<String, String>> tooLarge(MaxUploadSizeExceededException e) {
         return body(HttpStatus.PAYLOAD_TOO_LARGE, "BAD_REQUEST", "文件超过大小限制");
+    }
+
+    /** Browsers and tools probe for files that do not exist (favicon, devtools descriptors): a quiet 404, not an error. */
+    @ExceptionHandler(NoResourceFoundException.class)
+    public ResponseEntity<Map<String, String>> noResource(NoResourceFoundException e) {
+        return body(HttpStatus.NOT_FOUND, "NOT_FOUND", "资源不存在");
     }
 
     @ExceptionHandler(Exception.class)

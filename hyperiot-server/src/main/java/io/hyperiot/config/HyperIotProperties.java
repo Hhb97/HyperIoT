@@ -70,6 +70,32 @@ public class HyperIotProperties {
         public String getSubscription() { return subscription; }
         public void setSubscription(String subscription) { this.subscription = subscription; }
         public boolean isEmbedded() { return "embedded".equalsIgnoreCase(mode); }
+
+        private final EmqxApi emqxApi = new EmqxApi();
+
+        public EmqxApi getEmqxApi() { return emqxApi; }
+
+        /**
+         * Optional: EMQX's REST API (an API key created under Management -> API Keys). When set, the platform compares the
+         * clients EMQX reports as connected with the online state in its database, which repairs state after missed
+         * connect / disconnect events (for example while the platform's own MQTT connection was down).
+         */
+        public static class EmqxApi {
+            private String url = "";
+            private String key = "";
+            private String secret = "";
+            private Duration interval = Duration.ofSeconds(60);
+
+            public String getUrl() { return url; }
+            public void setUrl(String url) { this.url = url; }
+            public String getKey() { return key; }
+            public void setKey(String key) { this.key = key; }
+            public String getSecret() { return secret; }
+            public void setSecret(String secret) { this.secret = secret; }
+            public Duration getInterval() { return interval; }
+            public void setInterval(Duration interval) { this.interval = interval; }
+            public boolean isConfigured() { return url != null && !url.isBlank(); }
+        }
     }
 
     public static class Bus {

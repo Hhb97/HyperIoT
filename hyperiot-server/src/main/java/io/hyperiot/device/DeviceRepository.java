@@ -63,6 +63,15 @@ public class DeviceRepository {
                 .param("pk", productKey).param("dn", deviceName).query(DeviceRepository::map).optional();
     }
 
+    /** Devices the database believes are online and that connect through MQTT (HTTP / TCP devices are not known to the broker). */
+    public List<Device> findOnlineMqtt() {
+        return jdbc.sql("SELECT d.id, d.product_key, d.device_name, d.nickname, d.device_secret, d.status, d.enabled, "
+                        + "d.firmware_version, d.ip, d.last_online_at, d.last_offline_at, d.last_seen_at, d.tags, d.created_at "
+                        + "FROM device d JOIN product p ON p.product_key = d.product_key "
+                        + "WHERE d.status = 'ONLINE' AND p.protocol = 'MQTT'")
+                .query(DeviceRepository::map).list();
+    }
+
     public List<Device> findByProduct(String productKey) {
         return jdbc.sql("SELECT " + COLUMNS + " FROM device WHERE product_key = :pk ORDER BY id")
                 .param("pk", productKey).query(DeviceRepository::map).list();

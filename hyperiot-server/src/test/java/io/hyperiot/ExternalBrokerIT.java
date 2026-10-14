@@ -5,6 +5,9 @@ import io.hyperiot.common.Json;
 import io.hyperiot.device.DeviceCredentials;
 import io.hyperiot.support.IntegrationTestBase;
 import io.hyperiot.support.TestPlatform;
+import com.sun.net.httpserver.HttpServer;
+import io.hyperiot.access.EmqxClientReconciler;
+import io.hyperiot.device.DeviceRepository;
 import io.moquette.broker.Server;
 import io.moquette.broker.config.MemoryConfig;
 import org.junit.jupiter.api.AfterAll;
@@ -20,11 +23,17 @@ import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 
 import java.io.IOException;
+import java.net.InetSocketAddress;
+import java.nio.charset.StandardCharsets;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.List;
 import java.time.Duration;
 import java.util.Properties;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.awaitility.Awaitility.await;
 
 /**
@@ -54,8 +63,40 @@ class ExternalBrokerIT {
         }
     }
 
+    /** Stand-in for EMQX's REST API: GET /api/v5/clients. */
+    private static final List<String> LISTED_CLIENTS = new CopyOnWriteArrayList<>();
+    private static final List<String> API_AUTH_HEADERS = new CopyOnWriteArrayList<>();
+    private static final AtomicInteger API_STATUS = new AtomicInteger(200);
+    private static final HttpServer FAKE_EMQX_API = startFakeApi();
+
+    private static HttpServer startFakeApi() {
+        try {
+            HttpServer srv = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+            srv.createContext("/api/v5/clients", ex -> {
+                API_AUTH_HEADERS.add(String.valueOf(ex.getRequestHeaders().getFirst("Authorization")));
+                StringBuilder data = new StringBuilder();
+                for (String c : LISTED_CLIENTS) {
+                    data.append(data.length() == 0 ? "" : ",").append("{\"clientid\":\"").append(c).append("\",\"ip_address\":\"10.9.8.7\"}");
+                }
+                byte[] body = ("{\"data\":[" + data + "],\"meta\":{\"page\":1,\"limit\":5000,\"count\":" + LISTED_CLIENTS.size() + ",\"hasnext\":false}}")
+                        .getBytes(StandardCharsets.UTF_8);
+                ex.getResponseHeaders().add("Content-Type", "application/json");
+                ex.sendResponseHeaders(API_STATUS.get(), body.length);
+                ex.getResponseBody().write(body);
+                ex.close();
+            });
+            srv.start();
+            return srv;
+        } catch (IOException e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
     @DynamicPropertySource
     static void properties(DynamicPropertyRegistry r) {
+        r.add("hyperiot.mqtt.emqx-api.url", () -> "http://127.0.0.1:" + FAKE_EMQX_API.getAddress().getPort());
+        r.add("hyperiot.mqtt.emqx-api.key", () -> "api-key-1");
+        r.add("hyperiot.mqtt.emqx-api.secret", () -> "api-secret-1");
         r.add("spring.datasource.url", () -> "jdbc:h2:mem:hyperiot-ext-" + UUID.randomUUID() + ";MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1");
         r.add("server.shutdown", () -> "immediate");
         r.add("hyperiot.mqtt.mode", () -> "external");
@@ -71,7 +112,13 @@ class ExternalBrokerIT {
     @AfterAll
     static void stopBroker() {
         BROKER.stopServer();
+        FAKE_EMQX_API.stop(0);
     }
+
+    @Autowired
+    EmqxClientReconciler reconciler;
+    @Autowired
+    DeviceRepository deviceRepo;
 
     @Autowired
     TestRestTemplate rest;
@@ -173,5 +220,49 @@ class ExternalBrokerIT {
             await().atMost(Duration.ofSeconds(5)).untilAsserted(() ->
                     assertThat(api.get("/api/devices/" + f.deviceId()).json().path("status").asText()).isEqualTo("OFFLINE"));
         }
+    }
+
+    @Test
+    void reconcilerRepairsStateThatEventsMissed() throws Exception {
+        TestPlatform.Api api = new TestPlatform.Api(rest).login();
+        var f = fixture(api);
+        String clientId = DeviceCredentials.clientId(f.productKey(), f.deviceName());
+        API_STATUS.set(200);
+        LISTED_CLIENTS.clear();
+        LISTED_CLIENTS.add("hyperiot-server"); // the platform's own connection is not a device, it must be ignored
+
+        // 1) the connect event was received, then the disconnect event was lost: the database says ONLINE, EMQX says gone
+        hook("/api/mqtt/event", HOOK_TOKEN, Json.object().put("event", "client.connected").put("clientid", clientId).put("peername", "10.1.2.3:51234"));
+        await().atMost(Duration.ofSeconds(5)).untilAsserted(() ->
+                assertThat(api.get("/api/devices/" + f.deviceId()).json().path("status").asText()).isEqualTo("ONLINE"));
+        deviceRepo.markOnline(f.deviceId(), "10.1.2.3", System.currentTimeMillis() - 120_000); // came online a while ago
+        var r = reconciler.reconcile();
+        assertThat(r.markedOffline()).isEqualTo(1);
+        assertThat(api.get("/api/devices/" + f.deviceId()).json().path("status").asText()).isEqualTo("OFFLINE");
+
+        // 2) the connect event was lost: EMQX lists the client, the database says OFFLINE
+        LISTED_CLIENTS.add(clientId);
+        r = reconciler.reconcile();
+        assertThat(r.markedOnline()).isEqualTo(1);
+        JsonNode dev = api.get("/api/devices/" + f.deviceId()).json();
+        assertThat(dev.path("status").asText()).isEqualTo("ONLINE");
+        assertThat(dev.path("ip").asText()).isEqualTo("10.9.8.7");
+
+        // 3) nothing to repair: nothing changes
+        r = reconciler.reconcile();
+        assertThat(r.markedOnline()).isZero();
+        assertThat(r.markedOffline()).isZero();
+
+        // 4) EMQX cannot be asked: "unknown" must never turn into "everybody is offline"
+        LISTED_CLIENTS.clear();
+        deviceRepo.markOnline(f.deviceId(), "10.9.8.7", System.currentTimeMillis() - 120_000);
+        API_STATUS.set(500);
+        assertThatThrownBy(() -> reconciler.reconcile()).hasMessageContaining("500");
+        assertThat(api.get("/api/devices/" + f.deviceId()).json().path("status").asText()).isEqualTo("ONLINE");
+        API_STATUS.set(200);
+
+        // the API key was sent as HTTP basic auth
+        String expected = "Basic " + java.util.Base64.getEncoder().encodeToString("api-key-1:api-secret-1".getBytes(StandardCharsets.UTF_8));
+        assertThat(API_AUTH_HEADERS).isNotEmpty().allMatch(expected::equals);
     }
 }

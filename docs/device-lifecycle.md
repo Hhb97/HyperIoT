@@ -132,7 +132,38 @@ sequenceDiagram
 3. `DeviceStatusService.offline`：取消尚未发出的上线公告 → 写库 `status=OFFLINE`、`last_offline_at` → 清掉内存里的 `lastSeen` → 发布 `STATUS {OFFLINE}`。
 4. 下线事件目前只有 `realtime` 订阅（推送给控制台）；指令、影子、OTA 不需要处理下线——它们的状态都在库里，设备下次上线时补发。
 
-### 2.4 最近活跃时间（`last_seen_at`）
+### 2.4 事件丢了怎么办：自愈与对账
+
+上线、下线都靠 Broker 发的事件，而事件可能丢失：平台自己与 EMQX 的 MQTT 连接断开期间（会话是 clean session，断线期间的消息 EMQX 不会保留）、平台重启期间、网络抖动期间。丢了上线事件，设备在线却显示离线；丢了下线事件，设备已断开却一直显示在线。平台用两层机制把状态拉回正确：
+
+**① 有消息就是在线（自愈，始终开启，`DeviceStatusService.alive`）**
+每条上行消息都会检查：该设备在库里不是 `ONLINE`，就纠正为在线。典型场景是平台重启——重启时先把所有设备置为离线，之后设备的第一条上行消息就会把它们恢复。两个保护：本节点已知在线的设备只做一次内存集合查找，不增加数据库读取；刚下线（10 秒内）的设备收到的消息被视为旧连接的尾巴，不会被“复活”。
+
+**② 与 EMQX 对账（可选，`EmqxClientReconciler`）**
+配置了 EMQX 的 API 密钥后，平台每隔 `interval`（默认 60 秒）以及**每次重连 EMQX 之后**，调用 `GET /api/v5/clients?conn_state=connected` 取得 EMQX 认为已连接的客户端，与数据库对比：
+
+| 情况 | 处理 |
+| --- | --- |
+| EMQX 说已连接，库里不是在线 | 标记在线（补上丢失的上线事件） |
+| 库里是在线（仅 MQTT 产品的设备），EMQX 没有这个客户端，且上线已超过 30 秒 | 标记离线（补上丢失的下线事件） |
+| 刚上线不到 30 秒 | 不处理，事件可能还在路上 |
+| 调用 EMQX 失败（网络、密钥错误） | **什么都不改**，只记日志。“不知道”绝不当作“全部离线” |
+
+HTTP、TCP 设备不经过 EMQX，不参与对账。配置：在 EMQX Dashboard 的“管理 → API 密钥”创建一个密钥，然后设置
+
+```yaml
+hyperiot:
+  mqtt:
+    emqx-api:
+      url: http://<emqx>:18083
+      key: <API Key>
+      secret: <Secret Key>
+      interval: 60s
+```
+
+不配置则只有 ① 生效。平台重连 EMQX 时日志里会有一条 WARN：`Reconnected to the MQTT broker; … events … were missed`，看到它说明那段时间的事件丢了。
+
+### 2.5 最近活跃时间（`last_seen_at`）
 
 每条上行消息都会调用 `touch(deviceId, ts)`，只更新内存里的 `lastSeen` 映射；`DeviceStatusService.flushLastSeen` **每 5 秒**批量回写数据库（条件更新，只写更大的时间戳）。这样高频上报不会变成高频写库。
 

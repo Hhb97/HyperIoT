@@ -16,6 +16,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Component;
 
@@ -39,14 +40,21 @@ public class ExternalMqttGateway implements DownlinkChannel {
     private final UplinkProcessor uplink;
     private final DeviceService devices;
     private final DeviceStatusService status;
+    private final ApplicationEventPublisher events;
     private volatile MqttClient client;
     private volatile boolean stopping;
 
-    public ExternalMqttGateway(HyperIotProperties props, UplinkProcessor uplink, DeviceService devices, DeviceStatusService status) {
+    public ExternalMqttGateway(HyperIotProperties props, UplinkProcessor uplink, DeviceService devices, DeviceStatusService status,
+                               ApplicationEventPublisher events) {
         this.cfg = props.getMqtt();
         this.uplink = uplink;
         this.devices = devices;
         this.status = status;
+        this.events = events;
+    }
+
+    /** Published when the connection to the broker came back after a loss: connect / disconnect events may have been missed. */
+    public record Reconnected() {
     }
 
     @EventListener(ApplicationReadyEvent.class)
@@ -64,6 +72,10 @@ public class ExternalMqttGateway implements DownlinkChannel {
                     @Override
                     public void connectComplete(boolean reconnect, String serverUri) {
                         subscribe(c);
+                        if (reconnect) {
+                            log.warn("Reconnected to the MQTT broker; device connect / disconnect events during the outage were missed");
+                            events.publishEvent(new Reconnected());
+                        }
                     }
 
                     @Override

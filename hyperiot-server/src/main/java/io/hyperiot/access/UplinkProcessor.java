@@ -82,6 +82,7 @@ public class UplinkProcessor {
         }
         meter.mark();
         status.touch(d.id(), System.currentTimeMillis());
+        status.alive(d);
         deviceLog.up(d.id(), topicForLog, payload);
 
         JsonNode root;

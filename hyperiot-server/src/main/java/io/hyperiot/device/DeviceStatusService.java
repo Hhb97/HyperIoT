@@ -14,6 +14,8 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
 import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -42,6 +44,8 @@ public class DeviceStatusService {
         return t;
     });
     private final long announceDelayMs;
+    /** Devices this node already knows to be online; lets the per-message check below be a cheap set lookup. */
+    private final Set<Long> believedOnline = ConcurrentHashMap.newKeySet();
 
     public DeviceStatusService(DeviceRepository repo, EventBus bus, HyperIotProperties props) {
         this.repo = repo;
@@ -69,6 +73,7 @@ public class DeviceStatusService {
     public void online(Device d, String ip) {
         long now = System.currentTimeMillis();
         repo.markOnline(d.id(), ip, now);
+        believedOnline.add(d.id());
         if (announceDelayMs <= 0) {
             publish(d, "ONLINE", ip, now);
             return;
@@ -91,11 +96,13 @@ public class DeviceStatusService {
     public void onlineNow(Device d, String ip) {
         long now = System.currentTimeMillis();
         repo.markOnline(d.id(), ip, now);
+        believedOnline.add(d.id());
         publish(d, "ONLINE", ip, now);
     }
 
     public void offline(Device d) {
         long now = System.currentTimeMillis();
+        believedOnline.remove(d.id());
         ScheduledFuture<?> pending = pendingAnnouncements.remove(d.id());
         if (pending != null) {
             pending.cancel(false); // went away before it was announced
@@ -103,6 +110,32 @@ public class DeviceStatusService {
         repo.markOffline(d.id(), now);
         lastSeen.remove(d.id());
         publish(d, "OFFLINE", null, now);
+    }
+
+    /**
+     * Called for every message a device sends: a device that talks is online. This repairs the state when the platform
+     * missed the connect event (it restarted, or its connection to the broker was down for a while). A message that
+     * arrives right after the device went offline is ignored, it belongs to the connection that just closed.
+     */
+    public void alive(Device d) {
+        if (believedOnline.contains(d.id())) {
+            return;
+        }
+        Optional<Device> fresh = repo.findById(d.id());
+        if (fresh.isEmpty()) {
+            return;
+        }
+        Device f = fresh.get();
+        if (!"ONLINE".equals(f.status())) {
+            long now = System.currentTimeMillis();
+            if (f.lastOfflineAt() != null && now - f.lastOfflineAt() < 10_000) {
+                return;
+            }
+            log.info("Device {}/{} is sending but was {}; marking it online", f.productKey(), f.deviceName(), f.status());
+            online(f, f.ip());
+            return;
+        }
+        believedOnline.add(d.id());
     }
 
     public void touch(long deviceId, long ts) {
