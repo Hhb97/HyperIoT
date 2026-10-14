@@ -28,15 +28,15 @@ public class TelemetryWriter {
     private static final Logger log = LoggerFactory.getLogger(TelemetryWriter.class);
     private static final int QUEUE_CAPACITY = 200_000;
 
-    private final TelemetryRepository repo;
+    private final TelemetryStore repo;
     private final EventBus bus;
     private final HyperIotProperties.Telemetry cfg;
-    private final LinkedBlockingQueue<TelemetryRepository.Row> queue = new LinkedBlockingQueue<>(QUEUE_CAPACITY);
+    private final LinkedBlockingQueue<TelemetryStore.Row> queue = new LinkedBlockingQueue<>(QUEUE_CAPACITY);
     private final Thread flusher;
     private volatile boolean running = true;
     private volatile long dropped;
 
-    public TelemetryWriter(TelemetryRepository repo, EventBus bus, HyperIotProperties props) {
+    public TelemetryWriter(TelemetryStore repo, EventBus bus, HyperIotProperties props) {
         this.repo = repo;
         this.bus = bus;
         this.cfg = props.getTelemetry();
@@ -56,7 +56,7 @@ public class TelemetryWriter {
             return;
         }
         params.fields().forEachRemaining(e -> {
-            TelemetryRepository.Row row = toRow(m.deviceId(), e.getKey(), m.ts(), e.getValue());
+            TelemetryStore.Row row = toRow(m.deviceId(), e.getKey(), m.ts(), e.getValue());
             if (row != null && !queue.offer(row)) {
                 if (dropped++ % 1000 == 0) {
                     log.warn("Telemetry queue full, {} samples dropped so far", dropped);
@@ -65,25 +65,25 @@ public class TelemetryWriter {
         });
     }
 
-    static TelemetryRepository.Row toRow(long deviceId, String identifier, long ts, JsonNode v) {
+    static TelemetryStore.Row toRow(long deviceId, String identifier, long ts, JsonNode v) {
         if (v.isBoolean()) {
-            return new TelemetryRepository.Row(deviceId, identifier, ts, v.asBoolean() ? 1.0 : 0.0, null);
+            return new TelemetryStore.Row(deviceId, identifier, ts, v.asBoolean() ? 1.0 : 0.0, null);
         }
         if (v.isNumber()) {
-            return new TelemetryRepository.Row(deviceId, identifier, ts, v.asDouble(), null);
+            return new TelemetryStore.Row(deviceId, identifier, ts, v.asDouble(), null);
         }
         if (v.isTextual()) {
             String s = v.asText();
-            return new TelemetryRepository.Row(deviceId, identifier, ts, null, s.length() > 1024 ? s.substring(0, 1024) : s);
+            return new TelemetryStore.Row(deviceId, identifier, ts, null, s.length() > 1024 ? s.substring(0, 1024) : s);
         }
         return null;
     }
 
     private void loop() {
-        List<TelemetryRepository.Row> batch = new ArrayList<>(cfg.getBatchSize());
+        List<TelemetryStore.Row> batch = new ArrayList<>(cfg.getBatchSize());
         while (running || !queue.isEmpty()) {
             try {
-                TelemetryRepository.Row first = queue.poll(cfg.getFlushInterval().toMillis(), TimeUnit.MILLISECONDS);
+                TelemetryStore.Row first = queue.poll(cfg.getFlushInterval().toMillis(), TimeUnit.MILLISECONDS);
                 if (first == null) {
                     continue;
                 }
@@ -100,7 +100,7 @@ public class TelemetryWriter {
             }
         }
         // drain what is left on shutdown
-        List<TelemetryRepository.Row> rest = new ArrayList<>();
+        List<TelemetryStore.Row> rest = new ArrayList<>();
         queue.drainTo(rest);
         if (!rest.isEmpty()) {
             try {
@@ -111,8 +111,22 @@ public class TelemetryWriter {
         }
     }
 
-    private void flush(List<TelemetryRepository.Row> rows) {
-        repo.insertBatch(rows);
+    /** A few retries with backoff ride out a short database / InfluxDB outage; after that the batch is dropped. */
+    private void flush(List<TelemetryStore.Row> rows) throws InterruptedException {
+        long backoff = 500;
+        for (int attempt = 1; ; attempt++) {
+            try {
+                repo.insertBatch(rows);
+                return;
+            } catch (RuntimeException e) {
+                if (attempt >= 4 || !running) {
+                    throw e;
+                }
+                log.warn("Writing {} samples failed (attempt {}): {}. Retrying in {} ms", rows.size(), attempt, e.getMessage(), backoff);
+                Thread.sleep(backoff);
+                backoff *= 2;
+            }
+        }
     }
 
     @PreDestroy
@@ -125,6 +139,8 @@ public class TelemetryWriter {
     void purge() {
         long cutoff = System.currentTimeMillis() - cfg.getRetentionDays() * 86_400_000L;
         int n = repo.deleteOlderThan(cutoff);
-        log.info("Telemetry retention: deleted {} samples older than {} days", n, cfg.getRetentionDays());
+        if (n > 0) {
+            log.info("Telemetry retention: deleted {} samples older than {} days", n, cfg.getRetentionDays());
+        }
     }
 }

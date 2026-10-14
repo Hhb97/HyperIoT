@@ -1,4 +1,4 @@
-# Cluster-style topology from the architecture diagram: EMQX (access) -> Kafka (bus) -> HyperIoT (services) -> PostgreSQL.
+# Production stack: EMQX (access) -> Kafka (bus) -> HyperIoT (services) -> PostgreSQL (business data) + InfluxDB 1.8 (time series).
 # EXPERIMENTAL: the EMQX settings below follow the EMQX 5 documentation but have not been run against a live
 # EMQX in this repository's CI. Read docs/deployment.md before using it.
 #
@@ -13,10 +13,12 @@ services:
         condition: service_healthy
       kafka:
         condition: service_started
+      influxdb:
+        condition: service_healthy
       emqx:
         condition: service_healthy
     environment:
-      SPRING_PROFILES_ACTIVE: postgres,kafka
+      SPRING_PROFILES_ACTIVE: prod   # = postgres,kafka,emqx,influx
       HYPERIOT_DB_URL: jdbc:postgresql://postgres:5432/hyperiot
       HYPERIOT_DB_USER: hyperiot
       HYPERIOT_DB_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
@@ -24,11 +26,14 @@ services:
       HYPERIOT_JWT_SECRET: ${HYPERIOT_JWT_SECRET:?set HYPERIOT_JWT_SECRET in .env (at least 32 characters)}
       HYPERIOT_PUBLIC_BASE_URL: ${HYPERIOT_PUBLIC_BASE_URL:-http://localhost:8080}
       HYPERIOT_KAFKA_SERVERS: kafka:9092
-      HYPERIOT_MQTT_MODE: external
       HYPERIOT_MQTT_BROKER_URL: tcp://emqx:1883
       HYPERIOT_MQTT_USERNAME: hyperiot-platform
       HYPERIOT_MQTT_PASSWORD: ${HYPERIOT_MQTT_PASSWORD:?set HYPERIOT_MQTT_PASSWORD in .env}
       HYPERIOT_HOOK_TOKEN: ${HYPERIOT_HOOK_TOKEN:?set HYPERIOT_HOOK_TOKEN in .env}
+      HYPERIOT_INFLUX_URL: http://influxdb:8086
+      HYPERIOT_INFLUX_DB: hyperiot
+      HYPERIOT_INFLUX_USER: hyperiot
+      HYPERIOT_INFLUX_PASSWORD: ${INFLUX_PASSWORD:?set INFLUX_PASSWORD in .env}
     ports:
       - "8080:8080"
     volumes:
@@ -87,6 +92,23 @@ services:
       - kafka-data:/var/lib/kafka/data
     restart: unless-stopped
 
+  influxdb:
+    image: influxdb:1.8
+    environment:
+      INFLUXDB_DB: hyperiot
+      INFLUXDB_HTTP_AUTH_ENABLED: "true"
+      # the platform uses this account; it needs admin rights to create the database and retention policy itself
+      INFLUXDB_ADMIN_USER: hyperiot
+      INFLUXDB_ADMIN_PASSWORD: ${INFLUX_PASSWORD:?set INFLUX_PASSWORD in .env}
+    volumes:
+      - influx-data:/var/lib/influxdb
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8086/ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
   postgres:
     image: postgres:16
     environment:
@@ -105,4 +127,5 @@ services:
 volumes:
   hyperiot-data:
   kafka-data:
+  influx-data:
   pg-data:

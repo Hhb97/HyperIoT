@@ -140,7 +140,6 @@ public class DeviceRepository {
 
     public void delete(long id) {
         jdbc.sql("DELETE FROM device_shadow WHERE device_id = :id").param("id", id).update();
-        jdbc.sql("DELETE FROM telemetry WHERE device_id = :id").param("id", id).update();
         jdbc.sql("DELETE FROM device_event WHERE device_id = :id").param("id", id).update();
         jdbc.sql("DELETE FROM device_log WHERE device_id = :id").param("id", id).update();
         jdbc.sql("DELETE FROM command WHERE device_id = :id").param("id", id).update();

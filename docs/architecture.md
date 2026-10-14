@@ -93,9 +93,19 @@
 
 ## 8. 数据与保留
 
-- 时序表：`telemetry(device_id, identifier, ts, num_value, str_value)`，`ts` 是毫秒时间戳（整数），聚合就是整数除法分桶，H2 和 PostgreSQL 通用。布尔存为 0 / 1。
-- 批量写入：消费者把样本放进 20 万容量的队列，每 500 毫秒或 500 行批量 `INSERT`；队列满则丢弃并告警，不阻塞总线。
-- 保留：每天 03:17 删除 `retention-days`（默认 30）天前的样本；设备日志保留 3 天。
+时序存储有两种实现（`hyperiot.timeseries.type`），接口是 `TelemetryStore`：
+
+| | `jdbc`（默认） | `influx`（InfluxDB 1.x） |
+| --- | --- | --- |
+| 存放 | 关系库表 `telemetry(device_id, identifier, ts, num_value, str_value)` | measurement `telemetry`，tag `device_id` / `identifier`，field `num`（浮点）/ `str`（字符串） |
+| 聚合 | `ts` 是毫秒整数，整数除法分桶，H2 / PostgreSQL 通用 | `GROUP BY time(Nms) fill(none)`，同样按 epoch 对齐 |
+| 保留 | 每天 03:17 删除 `retention-days`（默认 30）天前的样本 | 启动时创建 / 更新默认保留策略（同一个 `retention-days`），过期由 InfluxDB 负责 |
+| 删设备 | `DELETE … WHERE device_id` | `DELETE FROM telemetry WHERE "device_id"='…'` |
+
+- 布尔存为 1 / 0。InfluxDB 里数值永远写成带小数点的浮点（`20.0`），避免首次写入整数把字段定成 integer 之后拒绝浮点。
+- 批量写入：消费者把样本放进 20 万容量的队列，每 500 毫秒或 500 行批量写一次；失败时指数退避重试 3 次，仍失败则丢弃该批并记日志；队列满则丢弃并告警，不阻塞总线。
+- 进入 InfluxQL 的标识符只可能是通过物模型校验的 `[a-zA-Z][a-zA-Z0-9_]{0,63}`，设备 ID 是数字，在拼接前还会再校验一次。
+- 设备日志保留 3 天。
 
 ## 9. 已知限制（汇总）
 

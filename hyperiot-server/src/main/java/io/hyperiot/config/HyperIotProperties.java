@@ -20,6 +20,7 @@ public class HyperIotProperties {
     private final Webhook webhook = new Webhook();
     private final Ota ota = new Ota();
     private final Access access = new Access();
+    private final Timeseries timeseries = new Timeseries();
     private String publicBaseUrl = "http://localhost:8080";
 
     public Mqtt getMqtt() { return mqtt; }
@@ -32,6 +33,7 @@ public class HyperIotProperties {
     public Webhook getWebhook() { return webhook; }
     public Ota getOta() { return ota; }
     public Access getAccess() { return access; }
+    public Timeseries getTimeseries() { return timeseries; }
     public String getPublicBaseUrl() { return publicBaseUrl; }
     public void setPublicBaseUrl(String publicBaseUrl) { this.publicBaseUrl = publicBaseUrl; }
 
@@ -191,5 +193,42 @@ public class HyperIotProperties {
 
         public int getRateLimitPerSecond() { return rateLimitPerSecond; }
         public void setRateLimitPerSecond(int rateLimitPerSecond) { this.rateLimitPerSecond = rateLimitPerSecond; }
+    }
+
+    public static class Timeseries {
+        /** jdbc: telemetry table in the relational database; influx: InfluxDB 1.x. */
+        private String type = "jdbc";
+        private final Influx influx = new Influx();
+
+        public String getType() { return type; }
+        public void setType(String type) { this.type = type; }
+        public Influx getInflux() { return influx; }
+
+        public static class Influx {
+            private String url = "http://localhost:8086";
+            private String database = "hyperiot";
+            private String username = "";
+            private String password = "";
+            /** Name of the retention policy that is created (and made the default) on startup. */
+            private String retentionPolicy = "hyperiot_rp";
+            /** Create the database and retention policy at startup (needs an admin account). */
+            private boolean autoCreate = true;
+            private Duration timeout = Duration.ofSeconds(10);
+
+            public String getUrl() { return url; }
+            public void setUrl(String url) { this.url = url; }
+            public String getDatabase() { return database; }
+            public void setDatabase(String database) { this.database = database; }
+            public String getUsername() { return username; }
+            public void setUsername(String username) { this.username = username; }
+            public String getPassword() { return password; }
+            public void setPassword(String password) { this.password = password; }
+            public String getRetentionPolicy() { return retentionPolicy; }
+            public void setRetentionPolicy(String retentionPolicy) { this.retentionPolicy = retentionPolicy; }
+            public boolean isAutoCreate() { return autoCreate; }
+            public void setAutoCreate(boolean autoCreate) { this.autoCreate = autoCreate; }
+            public Duration getTimeout() { return timeout; }
+            public void setTimeout(Duration timeout) { this.timeout = timeout; }
+        }
     }
 }

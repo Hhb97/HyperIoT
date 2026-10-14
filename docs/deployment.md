@@ -21,8 +21,40 @@
 | `HYPERIOT_WEBHOOK_ALLOW_PRIVATE` | `false` | 规则 Webhook 是否允许访问内网地址 |
 | `HYPERIOT_OTA_DIR` | `./data/firmware` | 固件文件目录（多节点需共享存储） |
 | `HYPERIOT_DB_URL` / `_USER` / `_PASSWORD` | — | profile `postgres` 下的数据库连接 |
+| `HYPERIOT_TS_TYPE` | `jdbc` | 时序存储：`jdbc`（关系库里的 `telemetry` 表）或 `influx`（InfluxDB 1.x，也可用 profile `influx`） |
+| `HYPERIOT_INFLUX_URL` / `_DB` | `http://localhost:8086` / `hyperiot` | InfluxDB 地址与库名 |
+| `HYPERIOT_INFLUX_USER` / `_PASSWORD` | 空 | InfluxDB 账号（开启了认证时必填；自动建库需要管理员权限） |
 
 更多项（`application.yml` 里没列出的）用 Spring 的松散绑定：`hyperiot.telemetry.retention-days`（默认 30）、`hyperiot.command.reply-timeout`（30s）、`hyperiot.command.default-ttl`（5m）、`hyperiot.access.rate-limit-per-second`（每设备 50 条/秒，0 关闭）、`hyperiot.model.strict`（true）、`hyperiot.bus.partitions`（内存总线每订阅者的分区线程数，默认 4）等，完整列表见 `HyperIotProperties.java`。
+
+## 生产栈：PostgreSQL + Kafka + EMQX + InfluxDB 1.8
+
+一个 profile 打开全部：`--spring.profiles.active=prod`（等价于 `postgres,kafka,emqx,influx`）。
+
+```bash
+export HYPERIOT_DB_URL=jdbc:postgresql://<pg>:5432/hyperiot  HYPERIOT_DB_USER=...  HYPERIOT_DB_PASSWORD=...
+export HYPERIOT_KAFKA_SERVERS=<kafka>:9092
+export HYPERIOT_MQTT_BROKER_URL=tcp://<emqx>:1883  HYPERIOT_MQTT_USERNAME=hyperiot-platform  HYPERIOT_MQTT_PASSWORD=...
+export HYPERIOT_HOOK_TOKEN=...                       # EMQX 调用平台钩子时带的令牌
+export HYPERIOT_INFLUX_URL=http://<influx>:8086  HYPERIOT_INFLUX_DB=hyperiot  HYPERIOT_INFLUX_USER=...  HYPERIOT_INFLUX_PASSWORD=...
+export HYPERIOT_ADMIN_PASSWORD=...  HYPERIOT_JWT_SECRET=...  HYPERIOT_PUBLIC_BASE_URL=http://<平台对设备可达的地址>:8080
+java -jar hyperiot-server-0.1.0-SNAPSHOT.jar --spring.profiles.active=prod
+```
+
+四个外部组件各自要准备的事：
+
+| 组件 | 你需要做的 | 平台自动做的 |
+| --- | --- | --- |
+| **PostgreSQL** | 建一个空库：`CREATE DATABASE hyperiot;`，给账号该库的建表权限 | 启动时 Flyway 建表 |
+| **Kafka** | 确保 `advertised.listeners` 是平台机器能访问的地址；账号需要建 topic 权限（或自己提前建 6 个 topic，见 §4） | 自动创建 6 个 topic、使用 `hyperiot-*` 消费者组 |
+| **EMQX 5.x** | ① 配 HTTP 认证 → `POST <平台>/api/mqtt/auth`；② 配 HTTP 授权 → `POST <平台>/api/mqtt/acl`；两处都带请求头 `X-Hook-Token: <HYPERIOT_HOOK_TOKEN>`；③ 允许平台账号 `hyperiot-platform`（平台的认证钩子会把它识别为超级用户，所以只需要它的密码与 `HYPERIOT_MQTT_PASSWORD` 一致）；详见 §4 | 以该账号连接 EMQX，共享订阅 `hyperiot/#`，订阅 `$SYS` 的上下线事件 |
+| **InfluxDB 1.8** | 开了认证的话，给平台一个管理员账号（要自动建库时）；或自己建好库和保留策略并把 `HYPERIOT_INFLUX_*` 设为只写读账号、关闭自动建库（`hyperiot.timeseries.influx.auto-create=false`） | 自动 `CREATE DATABASE`、创建/更新默认保留策略（`retention-days`，默认 30 天） |
+
+> EMQX 4.x 的认证 / 授权插件配置方式与 5.x 完全不同，本平台的钩子请求体与响应格式按 5.x 编写，**不兼容 4.x**。
+
+InfluxDB 中的数据模型：measurement `telemetry`，tag `device_id`、`identifier`，field `num`（浮点，布尔存 1/0）和 `str`（字符串），时间戳毫秒。设备删除时平台会 `DELETE` 该设备的序列；过期由保留策略负责。`last` 聚合在 InfluxDB 下返回的是时间桶的起点，而 JDBC 下返回的是该桶最后一个样本的时间。
+
+> **InfluxDB 部分没有在真实的 InfluxDB 上跑过**：仓库里的测试用一个遵循官方 HTTP API 文档的假服务验证了请求格式（行协议、InfluxQL）、结果解析、建库与保留策略语句，以及整个平台在 influx 模式下的写入 / 查询 / 删除流程。首次接真实 InfluxDB 请先冒烟：上报几条数据 → 控制台看曲线（原始值与聚合）→ 删除设备。
 
 ## 2. 单机
 
@@ -33,7 +65,7 @@ java -jar hyperiot-server-0.1.0-SNAPSHOT.jar --spring.profiles.active=postgres  
 
 H2 适合试用和小规模；生产建议 PostgreSQL。表结构由 Flyway 自动迁移（`db/migration`），SQL 同时兼容两者。
 
-## 3. PostgreSQL / TimescaleDB
+## 3. PostgreSQL
 
 ```bash
 export HYPERIOT_DB_URL=jdbc:postgresql://db:5432/hyperiot HYPERIOT_DB_USER=hyperiot HYPERIOT_DB_PASSWORD=...
@@ -42,14 +74,7 @@ java -jar hyperiot-server.jar --spring.profiles.active=postgres
 
 > **未在真实 PostgreSQL 上跑过自动化测试**（开发环境没有 Docker），SQL 只使用标准语法并在 H2 的 PostgreSQL 模式下通过测试。上线前请在测试库跑一遍冒烟（建表、上报、聚合查询、OTA）。
 
-数据量上来之后可以把 `telemetry` 改成 TimescaleDB 超表（时间列是毫秒整数）：
-
-```sql
-CREATE EXTENSION IF NOT EXISTS timescaledb;
-SELECT create_hypertable('telemetry', 'ts', chunk_time_interval => 86400000, migrate_data => true);  -- 1 天一个分块
-```
-
-应用侧不用改：保留策略的 `DELETE` 在超表上也能工作，更高效的做法是改用 `drop_chunks`。
+数据量上来之后，把时序数据放到 InfluxDB 1.8：加 profile `influx`（或 `HYPERIOT_TS_TYPE=influx`），见上面的“生产栈”。关系库里只留产品、设备、规则、告警、指令等业务数据。
 
 ## 4. 集群拓扑（EMQX + Kafka）
 

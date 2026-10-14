@@ -5,6 +5,10 @@ server:
 spring:
   application:
     name: hyperiot
+  profiles:
+    group:
+      # one switch for the production stack: PostgreSQL + Kafka + EMQX (external MQTT) + InfluxDB
+      prod: postgres,kafka,emqx,influx
   datasource:
     # Default: file-based H2 in PostgreSQL mode, zero setup. Use the "postgres" profile for production.
     url: jdbc:h2:file:./data/hyperiot;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DEFAULT_NULL_ORDERING=HIGH
@@ -50,6 +54,13 @@ hyperiot:
     admin-password: ${HYPERIOT_ADMIN_PASSWORD:}
     jwt-secret: ${HYPERIOT_JWT_SECRET:}
     hook-token: ${HYPERIOT_HOOK_TOKEN:}
+  timeseries:
+    type: ${HYPERIOT_TS_TYPE:jdbc}
+    influx:
+      url: ${HYPERIOT_INFLUX_URL:http://localhost:8086}
+      database: ${HYPERIOT_INFLUX_DB:hyperiot}
+      username: ${HYPERIOT_INFLUX_USER:}
+      password: ${HYPERIOT_INFLUX_PASSWORD:}
   tcp:
     enabled: ${HYPERIOT_TCP_ENABLED:false}
     port: ${HYPERIOT_TCP_PORT:9100}

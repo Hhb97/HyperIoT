@@ -1,7 +1,7 @@
 # HyperIoT
 
 通用物联网（IoT）平台：设备接入、产品物模型、设备影子、规则与告警、远程指令、OTA 升级，附带 Web 控制台、REST API 和设备模拟器。
-**单个 JAR 开箱即用**（内置 MQTT Broker + H2 数据库），也可以换成 PostgreSQL / EMQX / Kafka 做集群部署。
+**单个 JAR 开箱即用**（内置 MQTT Broker + H2 数据库），生产栈一个 profile 切换到 **PostgreSQL + Kafka + EMQX + InfluxDB 1.8**。
 
 ![架构](docs/architecture.svg)
 
@@ -15,7 +15,7 @@
 | **规则与告警** | 多条件（AND / OR）阈值规则，动作支持“下发指令”和 Webhook；同一规则同一设备只保留一条活跃告警，条件消失自动恢复，支持确认 |
 | **远程指令** | 服务调用有完整状态机（待发送 / 已发送 / 成功 / 失败 / 超时）；离线指令带 TTL 排队，上线补发；支持同步等待应答 |
 | **OTA 升级** | 固件上传（SHA-256 校验）、按产品 / 设备批量升级、带签名的下载地址（支持断点续传）、逐设备进度、卡死检测 |
-| **时序数据** | 批量写入（削峰）、原始值 / 聚合（avg / max / min / last）查询、保留策略 |
+| **时序数据** | 批量写入（削峰、失败重试）、原始值 / 聚合（avg / max / min / last）查询、保留策略；存储可选关系库表或 **InfluxDB 1.8** |
 | **控制台** | 看板（实时消息流）、产品与物模型编辑、设备详情（实时属性 / 曲线 / 事件 / 服务调用 / 日志）、规则、告警、指令、OTA。无前端构建步骤，无外部依赖 |
 | **运维** | Prometheus 指标、健康检查、OpenAPI（Swagger UI）、优雅停机、Docker / Compose |
 
@@ -24,7 +24,7 @@
 需要 JDK 17 和 Maven 3.9+。
 
 ```bash
-# 1. 构建（同时跑完 57 个测试；加 -DskipTests 可跳过）
+# 1. 构建（同时跑完全部测试；加 -DskipTests 可跳过）
 mvn -B package
 
 # 2. 启动平台（内置 MQTT :1883，控制台 :8080，数据保存在 ./data）
@@ -47,12 +47,20 @@ HYPERIOT_DEVICE_SECRET='<脚本打印的设备密钥>' \
 
 > 默认端口 8080 / 1883 被占用时：`SERVER_PORT=18080 HYPERIOT_MQTT_PORT=11883`（同时把 `HYPERIOT_PUBLIC_BASE_URL` 改成对应地址）。
 
+### 生产栈：PostgreSQL + Kafka + EMQX + InfluxDB 1.8
+
+```bash
+java -jar hyperiot-server/target/hyperiot-server-0.1.0-SNAPSHOT.jar --spring.profiles.active=prod
+```
+
+`prod` 等价于 `postgres,kafka,emqx,influx`，各组件的地址和账号用环境变量传（`HYPERIOT_DB_*`、`HYPERIOT_KAFKA_SERVERS`、`HYPERIOT_MQTT_*`、`HYPERIOT_INFLUX_*`），每个组件需要你准备什么见 **[docs/deployment.md](docs/deployment.md#生产栈postgresql--kafka--emqx--influxdb-18)**。
+
 ### Docker
 
 ```bash
 cp .env.example .env        # 填好密码类变量
 docker compose up -d --build                         # 单机：HyperIoT + PostgreSQL
-docker compose -f docker-compose.cluster.yml up -d   # 集群拓扑：EMQX + Kafka + PostgreSQL（实验性，见 docs/deployment.md）
+docker compose -f docker-compose.cluster.yml up -d   # 生产栈：EMQX + Kafka + PostgreSQL + InfluxDB 1.8（实验性，见 docs/deployment.md）
 ```
 
 ## 设备怎么接入
@@ -101,16 +109,16 @@ docs/ scripts/          文档、演示数据脚本
 诚实地列出来，方便你判断能否用于你的场景：
 
 - **版本 0.1**：功能完整可运行，但没有经过生产流量验证。
-- **在 PostgreSQL 与真实 EMQX 上没有实测**：开发环境没有 Docker，PostgreSQL 配置、`docker-compose*.yml`、EMQX 的认证 / 授权 / `$SYS` 事件配置是按文档编写的，仓库里的自动化测试只覆盖 H2 与“用内置 Broker 模拟外接 Broker”。首次上 PostgreSQL / EMQX 请先在测试环境验证。
+- **PostgreSQL、真实 EMQX、真实 InfluxDB 没有实测**：开发环境没有 Docker，PostgreSQL 配置、`docker-compose*.yml`、EMQX 的认证 / 授权 / `$SYS` 事件配置是按文档编写的。自动化测试覆盖的是 H2、“用内置 Broker 模拟外接 Broker”、“用一个遵循文档的假 HTTP 服务模拟 InfluxDB”（请求格式与解析）。首次接这三个组件请先在测试环境冒烟。
 - **内置 Broker 适合开发和中小规模**（Moquette，单节点）。大规模接入请用 EMQX 集群（`HYPERIOT_MQTT_MODE=external`）。
 - **影子缓存是进程内的**：多节点部署时期望值写入走数据库，但各节点缓存不同步（Redis 共享缓存在路线图里）。
 - **单一管理员账号**，没有多租户与细粒度权限；设备密钥以明文存库（HMAC 校验需要原始密钥），请保护好数据库。
 - **没有内置 TLS**：生产环境在前面放反向代理（控制台 / HTTP）、EMQX 或 stunnel（MQTT / TCP）。签名密码是静态的，公网务必走 TLS。
-- 时序存储是普通关系表（H2 / PostgreSQL），适合百万级以内的点位；更大规模请改用 TimescaleDB 等（见部署文档）。
+- 默认时序存储是普通关系表（H2 / PostgreSQL），适合百万级以内的点位；数据量大时用 InfluxDB（`influx` profile）。
 
 ## 路线图
 
-TimescaleDB 超表与降采样 · Redis 共享影子与在线状态 · 多租户与角色权限 · 规则持续时间 / 去抖 / 设备离线告警 · 数据转发（Kafka / HTTP）· CoAP / LwM2M 网关 · 设备分组与批量指令 · Flink 流计算对接
+InfluxDB 降采样 / 连续查询 · Redis 共享影子与在线状态 · 多租户与角色权限 · 规则持续时间 / 去抖 / 设备离线告警 · 数据转发（Kafka / HTTP）· CoAP / LwM2M 网关 · 设备分组与批量指令 · Flink 流计算对接
 
 ## 许可证
 

@@ -1,29 +1,25 @@
 package io.hyperiot.data;
 
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
 
 import java.util.List;
 
 @Repository
-public class TelemetryRepository {
-
-    /** One stored sample. Numbers and booleans (as 1/0) go to num, strings and enums to str. */
-    public record Row(long deviceId, String identifier, long ts, Double num, String str) {
-    }
-
-    public record Point(long ts, Object value) {
-    }
+@ConditionalOnProperty(name = "hyperiot.timeseries.type", havingValue = "jdbc", matchIfMissing = true)
+public class JdbcTelemetryStore implements TelemetryStore {
 
     private final JdbcTemplate template;
     private final JdbcClient jdbc;
 
-    public TelemetryRepository(JdbcTemplate template, JdbcClient jdbc) {
+    public JdbcTelemetryStore(JdbcTemplate template, JdbcClient jdbc) {
         this.template = template;
         this.jdbc = jdbc;
     }
 
+    @Override
     public void insertBatch(List<Row> rows) {
         template.batchUpdate("INSERT INTO telemetry(device_id, identifier, ts, num_value, str_value) VALUES (?, ?, ?, ?, ?)",
                 rows, 500, (ps, r) -> {
@@ -39,6 +35,7 @@ public class TelemetryRepository {
                 });
     }
 
+    @Override
     public List<Point> raw(long deviceId, String identifier, long from, long to, int limit) {
         return jdbc.sql("SELECT ts, num_value, str_value FROM telemetry WHERE device_id = :d AND identifier = :i "
                         + "AND ts >= :from AND ts <= :to ORDER BY ts LIMIT :limit")
@@ -51,6 +48,7 @@ public class TelemetryRepository {
     }
 
     /** Aggregates numeric samples into fixed-size time buckets; aggregation is plain integer arithmetic on ts. */
+    @Override
     public List<Point> aggregate(long deviceId, String identifier, long from, long to, String agg, long interval, int limit) {
         if ("last".equals(agg)) {
             return jdbc.sql("SELECT t.ts AS ts, t.num_value AS v FROM telemetry t JOIN ("
@@ -75,7 +73,13 @@ public class TelemetryRepository {
                 .query((rs, n) -> new Point(rs.getLong("bucket"), rs.getDouble("v"))).list();
     }
 
+    @Override
     public int deleteOlderThan(long cutoff) {
         return jdbc.sql("DELETE FROM telemetry WHERE ts < :c").param("c", cutoff).update();
+    }
+
+    @Override
+    public void deleteDevice(long deviceId) {
+        jdbc.sql("DELETE FROM telemetry WHERE device_id = :d").param("d", deviceId).update();
     }
 }

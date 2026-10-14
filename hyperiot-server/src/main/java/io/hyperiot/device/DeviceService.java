@@ -5,6 +5,7 @@ import com.github.benmanes.caffeine.cache.Caffeine;
 import io.hyperiot.common.ApiException;
 import io.hyperiot.common.Hmac;
 import io.hyperiot.common.PageResult;
+import io.hyperiot.data.TelemetryStore;
 import io.hyperiot.product.ProductService;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
@@ -26,14 +27,16 @@ public class DeviceService {
     private final DeviceRepository repo;
     private final ProductService products;
     private final ApplicationEventPublisher events;
+    private final TelemetryStore telemetry;
     /** Hot path lookup used for every message; unknown devices are cached briefly too (negative cache). */
     private final Cache<String, Optional<Device>> cache = Caffeine.newBuilder()
             .maximumSize(100_000).expireAfterWrite(Duration.ofSeconds(30)).build();
 
-    public DeviceService(DeviceRepository repo, ProductService products, ApplicationEventPublisher events) {
+    public DeviceService(DeviceRepository repo, ProductService products, ApplicationEventPublisher events, TelemetryStore telemetry) {
         this.repo = repo;
         this.products = products;
         this.events = events;
+        this.telemetry = telemetry;
     }
 
     private static String cacheKey(String productKey, String deviceName) {
@@ -127,6 +130,7 @@ public class DeviceService {
         Device d = get(id);
         events.publishEvent(new DeviceChangedEvent(DeviceChangedEvent.Type.DELETED, id, d.productKey(), d.deviceName()));
         repo.delete(id);
+        telemetry.deleteDevice(id);
         evict(d);
     }
 

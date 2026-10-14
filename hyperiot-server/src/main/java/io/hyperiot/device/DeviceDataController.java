@@ -7,7 +7,7 @@ import io.hyperiot.common.ApiException;
 import io.hyperiot.common.PageResult;
 import io.hyperiot.data.DeviceLogService;
 import io.hyperiot.data.EventStore;
-import io.hyperiot.data.TelemetryRepository;
+import io.hyperiot.data.TelemetryStore;
 import io.hyperiot.model.ThingModel;
 import io.hyperiot.product.ProductService;
 import io.hyperiot.shadow.ShadowService;
@@ -35,7 +35,7 @@ public class DeviceDataController {
     public record InvokeRequest(JsonNode params, Long ttlSeconds) {
     }
 
-    public record TelemetryResponse(String identifier, List<TelemetryRepository.Point> points) {
+    public record TelemetryResponse(String identifier, List<TelemetryStore.Point> points) {
     }
 
     private static final Set<String> AGGREGATIONS = Set.of("raw", "avg", "max", "min", "last");
@@ -44,12 +44,12 @@ public class DeviceDataController {
     private final DeviceService devices;
     private final ProductService products;
     private final ShadowService shadow;
-    private final TelemetryRepository telemetry;
+    private final TelemetryStore telemetry;
     private final EventStore events;
     private final DeviceLogService logs;
     private final CommandService commands;
 
-    public DeviceDataController(DeviceService devices, ProductService products, ShadowService shadow, TelemetryRepository telemetry,
+    public DeviceDataController(DeviceService devices, ProductService products, ShadowService shadow, TelemetryStore telemetry,
                                 EventStore events, DeviceLogService logs, CommandService commands) {
         this.devices = devices;
         this.products = products;

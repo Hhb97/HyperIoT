@@ -9,6 +9,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.client.TestRestTemplate;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.test.context.DynamicPropertyRegistry;
+import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.DynamicPropertySource;
 
 import java.nio.file.Files;
@@ -20,6 +21,12 @@ import java.util.UUID;
  * between all integration tests.
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
+// ports go through inline properties (not @DynamicPropertySource) so that a subclass with its own context can override them
+@TestPropertySource(properties = {
+        "hyperiot.mqtt.port=${hyperiot.test.mqtt.port}",
+        "hyperiot.tcp.port=${hyperiot.test.tcp.port}",
+        "hyperiot.tcp.enabled=true"
+})
 public abstract class IntegrationTestBase {
 
     protected static final int MQTT_PORT = TestPlatform.freePort();
@@ -27,6 +34,8 @@ public abstract class IntegrationTestBase {
     private static final Path OTA_DIR;
 
     static {
+        System.setProperty("hyperiot.test.mqtt.port", Integer.toString(MQTT_PORT));
+        System.setProperty("hyperiot.test.tcp.port", Integer.toString(TCP_PORT));
         try {
             OTA_DIR = Files.createTempDirectory("hyperiot-ota-test");
         } catch (java.io.IOException e) {
@@ -56,10 +65,7 @@ public abstract class IntegrationTestBase {
     static void properties(DynamicPropertyRegistry r) {
         r.add("spring.datasource.url", () -> "jdbc:h2:mem:hyperiot-" + UUID.randomUUID() + ";MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1");
         r.add("server.shutdown", () -> "immediate");
-        r.add("hyperiot.mqtt.port", () -> MQTT_PORT);
         r.add("hyperiot.mqtt.host", () -> "127.0.0.1");
-        r.add("hyperiot.tcp.enabled", () -> true);
-        r.add("hyperiot.tcp.port", () -> TCP_PORT);
         r.add("hyperiot.security.admin-password", () -> TestPlatform.ADMIN_PASSWORD);
         r.add("hyperiot.security.jwt-secret", () -> TestPlatform.JWT_SECRET);
         r.add("hyperiot.ota.directory", () -> OTA_DIR.toString());
@@ -98,8 +104,13 @@ public abstract class IntegrationTestBase {
         return new Fixture(productId, productKey, device.get("id").asLong(), deviceName, device.get("deviceSecret").asText());
     }
 
+    /** Port of the embedded broker of this test's Spring context; subclasses with their own context override it. */
+    protected int mqttPort() {
+        return MQTT_PORT;
+    }
+
     protected TestPlatform.MqttDevice connect(Fixture f) throws Exception {
-        TestPlatform.MqttDevice d = TestPlatform.MqttDevice.connect(MQTT_PORT, f.productKey(), f.deviceName(), f.secret());
+        TestPlatform.MqttDevice d = TestPlatform.MqttDevice.connect(mqttPort(), f.productKey(), f.deviceName(), f.secret());
         d.subscribeAll();
         return d;
     }
