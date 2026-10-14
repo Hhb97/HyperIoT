@@ -109,7 +109,8 @@ docs/ scripts/          文档、演示数据脚本
 诚实地列出来，方便你判断能否用于你的场景：
 
 - **版本 0.1**：功能完整可运行，但没有经过生产流量验证。
-- **PostgreSQL、真实 EMQX、真实 InfluxDB 没有实测**：开发环境没有 Docker，PostgreSQL 配置、`docker-compose*.yml`、EMQX 的认证 / 授权 / `$SYS` 事件配置是按文档编写的。自动化测试覆盖的是 H2、“用内置 Broker 模拟外接 Broker”、“用一个遵循文档的假 HTTP 服务模拟 InfluxDB”（请求格式与解析）。首次接这三个组件请先在测试环境冒烟。
+- **PostgreSQL、真实 EMQX 没有实测**：开发环境没有 Docker，PostgreSQL 配置、`docker-compose*.yml`、EMQX 的认证 / 授权 / `$SYS` 事件配置是按文档编写的。自动化测试覆盖的是 H2 和“用内置 Broker 模拟外接 Broker”。首次接这两个组件请先在测试环境冒烟。
+- **InfluxDB 1.8.10 已对真实服务器验证**：`InfluxRealServerIT` 在真实实例上建一个临时库，验证建库与保留策略、写入（含整数 / 小数混写）、原始值与 avg / max / min / last 聚合、特殊字符、按设备删除，然后只删除自己建的临时库。默认跳过，运行方式：`HYPERIOT_TEST_INFLUX_URL=http://<influx>:8086 mvn -pl hyperiot-server test -Dtest=InfluxRealServerIT`（有认证时再设 `HYPERIOT_TEST_INFLUX_USER` / `_PASSWORD`）。
 - **内置 Broker 适合开发和中小规模**（Moquette，单节点）。大规模接入请用 EMQX 集群（`HYPERIOT_MQTT_MODE=external`）。
 - **影子缓存是进程内的**：多节点部署时期望值写入走数据库，但各节点缓存不同步（Redis 共享缓存在路线图里）。
 - **单一管理员账号**，没有多租户与细粒度权限；设备密钥以明文存库（HMAC 校验需要原始密钥），请保护好数据库。

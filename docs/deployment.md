@@ -89,7 +89,7 @@ java -jar hyperiot-server-0.1.0-SNAPSHOT.jar --spring.profiles.active=prod
 
 InfluxDB 中的数据模型：measurement `telemetry`，tag `device_id`、`identifier`，field `num`（浮点，布尔存 1/0）和 `str`（字符串），时间戳毫秒。设备删除时平台会 `DELETE` 该设备的序列；过期由保留策略负责。`last` 聚合在 InfluxDB 下返回的是时间桶的起点，而 JDBC 下返回的是该桶最后一个样本的时间。
 
-> **InfluxDB 部分没有在真实的 InfluxDB 上跑过**：仓库里的测试用一个遵循官方 HTTP API 文档的假服务验证了请求格式（行协议、InfluxQL）、结果解析、建库与保留策略语句，以及整个平台在 influx 模式下的写入 / 查询 / 删除流程。首次接真实 InfluxDB 请先冒烟：上报几条数据 → 控制台看曲线（原始值与聚合）→ 删除设备。
+> InfluxDB 1.8.10 已用 `InfluxRealServerIT` 对真实实例验证（建库、保留策略、写入、聚合查询、按设备删除；用法见 README）。上线前仍建议在你的环境里上报几条数据、看一遍曲线。
 
 ## 2. 单机
 
