@@ -162,6 +162,22 @@ class RulesCommandsIT extends IntegrationTestBase {
     }
 
     @Test
+    void queuedCommandsWaitForTheDeviceToSubscribe() throws Exception {
+        Fixture f = createFixture();
+        JsonNode cmd = api.post("/api/devices/" + f.deviceId() + "/services/fanOn/invoke", "{\"ttlSeconds\":120}").json();
+        assertThat(cmd.path("status").asText()).isEqualTo("PENDING");
+
+        // a slow device: connects first and only subscribes a little later. Delivering at CONNECT time would be lost.
+        try (TestPlatform.MqttDevice d = TestPlatform.MqttDevice.connect(mqttPort(), f.productKey(), f.deviceName(), f.secret())) {
+            Thread.sleep(300);
+            d.subscribeAll();
+            var invoke = d.await("thing/service/fanOn/invoke", 5000);
+            assertThat(invoke).as("command delivered after the device subscribed").isNotNull();
+            assertThat(invoke.payload().path("id").asText()).isEqualTo(cmd.path("requestId").asText());
+        }
+    }
+
+    @Test
     void commandsExpireWhenNoReplyComesBack() throws Exception {
         Fixture f = createFixture();
         // 1 second TTL, device never connects

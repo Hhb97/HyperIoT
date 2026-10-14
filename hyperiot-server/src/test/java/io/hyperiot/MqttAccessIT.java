@@ -29,6 +29,22 @@ class MqttAccessIT extends IntegrationTestBase {
     }
 
     @Test
+    void deviceCanConnectWithItsPlainSecretAsPassword() throws Exception {
+        Fixture f = createFixture();
+        try (TestPlatform.MqttDevice d = TestPlatform.MqttDevice.connectWithPassword(mqttPort(), f.productKey(), f.deviceName(), f.secret())) {
+            await().atMost(Duration.ofSeconds(5)).untilAsserted(() ->
+                    assertThat(device(f).path("status").asText()).isEqualTo("ONLINE"));
+            assertThat(d.isConnected()).isTrue();
+        }
+        // a secret that is almost right, and another device's secret, are refused
+        assertThatThrownBy(() -> TestPlatform.MqttDevice.connectWithPassword(mqttPort(), f.productKey(), f.deviceName(), f.secret() + "x"))
+                .isInstanceOf(MqttException.class);
+        Fixture other = createFixture();
+        assertThatThrownBy(() -> TestPlatform.MqttDevice.connectWithPassword(mqttPort(), f.productKey(), f.deviceName(), other.secret()))
+                .isInstanceOf(MqttException.class);
+    }
+
+    @Test
     void wrongPasswordIsRejected() {
         Fixture f = createFixture();
         assertThatThrownBy(() -> TestPlatform.MqttDevice.connectWithPassword(MQTT_PORT, f.productKey(), f.deviceName(), "not-the-signature"))

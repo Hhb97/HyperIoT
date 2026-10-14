@@ -206,7 +206,7 @@ public class TcpGateway implements DownlinkChannel {
             }
             ctx.writeAndFlush("{\"type\":\"auth_reply\",\"code\":200}\n");
             String ip = ctx.channel().remoteAddress() instanceof InetSocketAddress a ? a.getAddress().getHostAddress() : null;
-            status.online(device, ip);
+            status.onlineNow(device, ip);
             return true;
         }
 

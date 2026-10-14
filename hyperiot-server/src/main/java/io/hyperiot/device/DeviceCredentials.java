@@ -3,13 +3,14 @@ package io.hyperiot.device;
 import io.hyperiot.common.Hmac;
 
 /**
- * Device authentication. The secret never travels over the wire: devices send an HMAC-SHA256 signature and the
- * platform recomputes it.
+ * Device authentication. Devices send either the secret itself (simple; use TLS) or an HMAC-SHA256 signature of it
+ * (the secret never travels) and the platform verifies it.
  *
  * <pre>
  * MQTT clientId = productKey + "." + deviceName
  * MQTT username = deviceName + "&" + productKey
- * MQTT password = hex(HMAC-SHA256(key = deviceSecret, data = "clientId" + clientId + "deviceName" + deviceName + "productKey" + productKey))
+ * MQTT password = the deviceSecret itself (plain), or
+ *                 hex(HMAC-SHA256(key = deviceSecret, data = "clientId" + clientId + "deviceName" + deviceName + "productKey" + productKey))
  * HTTP header X-Signature = hex(HMAC-SHA256(key = deviceSecret, data = request body))
  * </pre>
  */
@@ -29,6 +30,19 @@ public final class DeviceCredentials {
     public static String mqttPassword(String secret, String productKey, String deviceName) {
         String data = "clientId" + clientId(productKey, deviceName) + "deviceName" + deviceName + "productKey" + productKey;
         return Hmac.sha256Hex(secret, data);
+    }
+
+    /**
+     * Checks the password of an MQTT connection. The plain device secret is accepted when {@code allowPlain} is set
+     * (it must then travel over TLS); the HMAC signature of the secret is always accepted. Comparisons are constant-time.
+     */
+    public static boolean verifyPassword(String secret, String productKey, String deviceName, String password, boolean allowPlain) {
+        if (secret == null || password == null) {
+            return false;
+        }
+        boolean hmac = Hmac.safeEquals(mqttPassword(secret, productKey, deviceName), password);
+        boolean plain = allowPlain && Hmac.safeEquals(secret, password);
+        return hmac || plain;
     }
 
     /** Parsed identity of an MQTT connection; null parts mean the client id / username were malformed. */

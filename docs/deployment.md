@@ -17,6 +17,7 @@
 | `HYPERIOT_HOOK_TOKEN` | 空 | EMQX 调用 `/api/mqtt/**` 时必须带的 `X-Hook-Token`；为空则钩子一律拒绝 |
 | `HYPERIOT_BUS` | `memory` | `memory` 或 `kafka`（也可用 profile `kafka`） |
 | `HYPERIOT_KAFKA_SERVERS` | `localhost:9092` | Kafka 地址 |
+| `HYPERIOT_ALLOW_PLAIN_DEVICE_PASSWORD` | `true` | 是否接受“设备密钥本身”作为 MQTT 密码（HMAC 签名始终接受）；公网无 TLS 时建议 `false` |
 | `HYPERIOT_TCP_ENABLED` / `_PORT` | `false` / `9100` | TCP 私有协议网关 |
 | `HYPERIOT_WEBHOOK_ALLOW_PRIVATE` | `false` | 规则 Webhook 是否允许访问内网地址 |
 | `HYPERIOT_OTA_DIR` | `./data/firmware` | 固件文件目录（多节点需共享存储） |
@@ -54,7 +55,7 @@ java -jar hyperiot-server-0.1.0-SNAPSHOT.jar --spring.profiles.active=prod
 
 ### 在已有的 EMQX 5.7.2 上配置（Dashboard 操作）
 
-下面的钩子地址 `<平台地址>` 必须是**从 EMQX 所在机器能访问到的平台地址**（例如平台跑在开发机上、EMQX 在虚拟机里，就填开发机的局域网 IP 和平台端口，不能填 `localhost`）。
+下面的 `<平台地址>` 必须是**从 EMQX 所在机器能访问到的平台地址**（例如平台跑在开发机上、EMQX 在虚拟机里，就填开发机在虚拟机网络里的 IP 和平台端口，不能填 `localhost`）。
 
 **① 认证**：Dashboard → Access Control → Authentication → Create → *Password-Based* → *HTTP Server*
 
@@ -74,18 +75,18 @@ java -jar hyperiot-server-0.1.0-SNAPSHOT.jar --spring.profiles.active=prod
 | Headers | 同上（`content-type`、`x-hook-token`） |
 | Body（键值对） | `clientid` = `${clientid}`，`topic` = `${topic}`，`action` = `${action}` |
 
-并在授权设置里把 *No Match* 设为 **Deny**；如果之前启用过 *Built-in Database* 之类的授权源，把它们禁用或排到 HTTP 之后，否则可能先于平台放行。认证同理：只保留这一个认证器，或把它排在最前面。
+并在授权设置里把 *No Match* 设为 **Deny**；已有的其它认证 / 授权源（如 Built-in Database）要禁用或排到 HTTP 之后，否则可能先于平台放行或拒绝。
 
-**③ 平台账号**：不用在 EMQX 里单独建用户。平台以 `HYPERIOT_MQTT_USERNAME`（默认 `hyperiot-platform`）和 `HYPERIOT_MQTT_PASSWORD` 连接，EMQX 会通过上面的认证钩子问平台，平台识别出这个账号并返回超级用户（超级用户不受授权限制，可以订阅 `hyperiot/#` 和 `$SYS`）。所以**平台必须先于设备启动并且 EMQX 能访问到钩子地址**；平台在 EMQX 不可用时每 5 秒重试一次连接。
+**③ 平台账号**：不用在 EMQX 里单独建用户。平台以 `HYPERIOT_MQTT_USERNAME`（默认 `hyperiot-platform`）和 `HYPERIOT_MQTT_PASSWORD` 连接，EMQX 通过上面的认证钩子问平台，平台识别出这个账号并返回超级用户（超级用户不受授权限制，可订阅 `hyperiot/#` 和 `$SYS`）。平台在 EMQX 不可用或钩子还没配好时每 5 秒重试一次连接。
 
-**④ 上线 / 下线事件**：平台通过订阅 `$SYS/brokers/+/clients/+/connected|disconnected` 得到设备在线状态。EMQX 5.7 里 Dashboard → Management → Settings → System Topics 中“客户端连接 / 断开事件”需要是开启状态（默认开启）。
+**④ 上线 / 下线事件**：平台订阅 `$SYS/brokers/+/clients/+/connected|disconnected` 得到设备在线状态，EMQX 的系统主题事件需要开启（5.x 默认开启）。
 
 **⑤ 验证**：
 1. 平台日志出现 `Connected to external MQTT broker …` 和 `Subscribed to $share/hyperiot/hyperiot/#`。
-2. 创建产品和设备后，用 MQTTX 之类的客户端按 `docs/protocol.md` 的凭据规则连接：签名正确能连上，错误会被拒绝。
-3. 设备连上后控制台里应显示“在线”，上报属性能在设备详情里看到。
+2. 在控制台创建产品和设备，用 MQTTX 等客户端连接（clientId / 用户名 / 密码规则见 `protocol.md` §1，密码直接填设备密钥）。
+3. 设备连上后控制台显示“在线”，向 `hyperiot/{productKey}/{deviceName}/thing/property/post` 发布属性能在设备详情里看到。
 
-> 上面的菜单名称和字段名是按 EMQX 5.x 文档写的，没有在 5.7.2 的界面上逐项对照；如果你的界面和描述有出入，以界面为准，保持“方法 / URL / 请求头 / 请求体字段”这几项一致即可。
+> 菜单名称和字段名是按 EMQX 5.x 文档写的，没有在 5.7.2 的界面上逐项对照；以界面为准，保持“方法 / URL / 请求头 / 请求体字段”这几项一致即可。
 
 InfluxDB 中的数据模型：measurement `telemetry`，tag `device_id`、`identifier`，field `num`（浮点，布尔存 1/0）和 `str`（字符串），时间戳毫秒。设备删除时平台会 `DELETE` 该设备的序列；过期由保留策略负责。`last` 聚合在 InfluxDB 下返回的是时间桶的起点，而 JDBC 下返回的是该桶最后一个样本的时间。
 

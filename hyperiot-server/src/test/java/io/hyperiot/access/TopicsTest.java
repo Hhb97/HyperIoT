@@ -79,4 +79,24 @@ class TopicsTest {
                 .isNotEqualTo(DeviceCredentials.mqttPassword("secret", "pk1", "dev2"))
                 .hasSize(64);
     }
+
+    @Test
+    void passwordVerification() {
+        String secret = "s3cretValue";
+        String hmac = DeviceCredentials.mqttPassword(secret, "pk1", "dev1");
+        // plain secret and HMAC signature are both accepted by default
+        assertThat(DeviceCredentials.verifyPassword(secret, "pk1", "dev1", secret, true)).isTrue();
+        assertThat(DeviceCredentials.verifyPassword(secret, "pk1", "dev1", hmac, true)).isTrue();
+        // strict mode: only the signature
+        assertThat(DeviceCredentials.verifyPassword(secret, "pk1", "dev1", secret, false)).isFalse();
+        assertThat(DeviceCredentials.verifyPassword(secret, "pk1", "dev1", hmac, false)).isTrue();
+        // wrong, empty, missing, and a signature computed for another device
+        assertThat(DeviceCredentials.verifyPassword(secret, "pk1", "dev1", "wrong", true)).isFalse();
+        assertThat(DeviceCredentials.verifyPassword(secret, "pk1", "dev1", "", true)).isFalse();
+        assertThat(DeviceCredentials.verifyPassword(secret, "pk1", "dev1", null, true)).isFalse();
+        assertThat(DeviceCredentials.verifyPassword(null, "pk1", "dev1", "x", true)).isFalse();
+        assertThat(DeviceCredentials.verifyPassword(secret, "pk1", "dev1", DeviceCredentials.mqttPassword(secret, "pk1", "dev2"), true)).isFalse();
+        // another device's plain secret never works
+        assertThat(DeviceCredentials.verifyPassword(secret, "pk1", "dev1", "otherSecret", true)).isFalse();
+    }
 }

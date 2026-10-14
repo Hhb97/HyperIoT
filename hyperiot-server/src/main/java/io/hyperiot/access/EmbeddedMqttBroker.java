@@ -1,7 +1,6 @@
 package io.hyperiot.access;
 
 import io.hyperiot.config.HyperIotProperties;
-import io.hyperiot.common.Hmac;
 import io.hyperiot.device.Device;
 import io.hyperiot.device.DeviceCredentials;
 import io.hyperiot.device.DeviceService;
@@ -136,8 +135,8 @@ public class EmbeddedMqttBroker implements DownlinkChannel {
             if (d.isEmpty() || !d.get().enabled()) {
                 return false;
             }
-            String expected = DeviceCredentials.mqttPassword(d.get().deviceSecret(), id.productKey(), id.deviceName());
-            return Hmac.safeEquals(expected, new String(password, StandardCharsets.UTF_8));
+            return DeviceCredentials.verifyPassword(d.get().deviceSecret(), id.productKey(), id.deviceName(),
+                    new String(password, StandardCharsets.UTF_8), props.getSecurity().isAllowPlainDevicePassword());
         }
     }
 

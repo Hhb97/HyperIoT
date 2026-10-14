@@ -10,16 +10,22 @@ HyperIoT 支持三种接入方式，**三种方式共用同一套消息格式与
 
 ## 1. 设备凭证
 
-创建设备后平台生成 `productKey`（产品标识）、`deviceName`（设备名）、`deviceSecret`（设备密钥）。**密钥不会在网络上传输**，设备用它计算签名。
+创建设备后平台生成 `productKey`（产品标识）、`deviceName`（设备名）、`deviceSecret`（设备密钥，控制台设备详情里可以查看）。MQTT 连接参数：
 
 ```
-MQTT clientId = productKey + "." + deviceName
-MQTT username = deviceName + "&" + productKey
-MQTT password = hex( HMAC-SHA256( key = deviceSecret,
-                     data = "clientId" + clientId + "deviceName" + deviceName + "productKey" + productKey ) )
+clientId = {productKey}.{deviceName}
+username = {deviceName}&{productKey}
+password = {deviceSecret}                         ← 最简单：直接用设备密钥作为密码
 ```
 
-> 签名是静态的（不含时间戳），所以**公网环境必须使用 TLS**（在 EMQX 或负载均衡层终结）。重置设备密钥会使旧签名立即失效并踢下线。
+**两种密码都被接受**，任何 MQTT 客户端（MQTTX、各种单片机库）用第一种即可，不需要计算签名：
+
+| 方式 | password | 说明 |
+| --- | --- | --- |
+| 明文（默认开启） | 设备密钥本身 | 简单；**密码会出现在网络上，公网必须走 TLS（EMQX 的 8883）**。可用 `hyperiot.security.allow-plain-device-password=false` 关闭 |
+| HMAC 签名 | `hex(HMAC-SHA256(key = deviceSecret, data = "clientId" + clientId + "deviceName" + deviceName + "productKey" + productKey))` | 密钥不上网，设备端要实现 HMAC-SHA256 |
+
+> 重置设备密钥会使旧密码 / 旧签名立即失效，并把设备踢下线；禁用或删除设备同理。
 
 ## 2. MQTT 主题
 
@@ -53,6 +59,8 @@ MQTT password = hex( HMAC-SHA256( key = deviceSecret,
 | `thing/event/{identifier}/post_reply` | 事件上报结果 | 同上 |
 | `shadow/get_reply` | 影子内容 | `{"state":{"reported":{…},"desired":{…}},"version":3,"ts":…}` |
 | `ota/upgrade` | 固件升级指令 | `{"id":"<taskId>","version":"2.0.0","url":"https://…","size":4096,"sha256":"…"}` |
+
+**设备应在连接成功后立即订阅 `hyperiot/{productKey}/{deviceName}/#`。** 设备“上线”后触发的下发（排队的指令、待下发的期望值、OTA 升级指令）会延迟约 1 秒（`hyperiot.access.online-announce-delay`），给设备留出订阅的时间——Broker 会静默丢弃发给尚未订阅客户端的消息。订阅得更晚的设备，请在订阅后主动发 `shadow/get` 拉取状态。
 
 QoS：平台下行使用 QoS 1，设备上行建议 QoS 1。设备离线期间的下行指令**不依赖 MQTT 离线消息**：平台自己保存指令（带 TTL），设备上线后补发。
 

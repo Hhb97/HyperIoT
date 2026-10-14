@@ -104,6 +104,11 @@ public class HyperIotProperties {
         private Duration jwtTtl = Duration.ofHours(8);
         /** Shared secret EMQX must send in the X-Hook-Token header when it calls /api/mqtt/**. */
         private String hookToken = "";
+        /**
+         * Accept the device secret itself as MQTT password (simplest for devices, but only safe over TLS).
+         * The HMAC signature of the secret is accepted either way.
+         */
+        private boolean allowPlainDevicePassword = true;
 
         public String getAdminUsername() { return adminUsername; }
         public void setAdminUsername(String adminUsername) { this.adminUsername = adminUsername; }
@@ -113,6 +118,8 @@ public class HyperIotProperties {
         public void setJwtSecret(String jwtSecret) { this.jwtSecret = jwtSecret; }
         public Duration getJwtTtl() { return jwtTtl; }
         public void setJwtTtl(Duration jwtTtl) { this.jwtTtl = jwtTtl; }
+        public boolean isAllowPlainDevicePassword() { return allowPlainDevicePassword; }
+        public void setAllowPlainDevicePassword(boolean allowPlainDevicePassword) { this.allowPlainDevicePassword = allowPlainDevicePassword; }
         public String getHookToken() { return hookToken; }
         public void setHookToken(String hookToken) { this.hookToken = hookToken; }
     }
@@ -190,7 +197,15 @@ public class HyperIotProperties {
     public static class Access {
         /** Per-device uplink limit (messages per second, burst = 2x). 0 disables the limit. */
         private int rateLimitPerSecond = 50;
+        /**
+         * MQTT devices usually subscribe to their downlink topics right after CONNECT. Everything that is delivered when a
+         * device "comes online" (queued commands, desired state, OTA instructions) is held back this long so that it is not
+         * published before the subscription exists, which the broker would silently drop.
+         */
+        private Duration onlineAnnounceDelay = Duration.ofSeconds(1);
 
+        public Duration getOnlineAnnounceDelay() { return onlineAnnounceDelay; }
+        public void setOnlineAnnounceDelay(Duration onlineAnnounceDelay) { this.onlineAnnounceDelay = onlineAnnounceDelay; }
         public int getRateLimitPerSecond() { return rateLimitPerSecond; }
         public void setRateLimitPerSecond(int rateLimitPerSecond) { this.rateLimitPerSecond = rateLimitPerSecond; }
     }

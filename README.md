@@ -68,7 +68,7 @@ docker compose -f docker-compose.cluster.yml up -d   # 生产栈：EMQX + Kafka 
 ```
 clientId = {productKey}.{deviceName}
 username = {deviceName}&{productKey}
-password = hex(HMAC-SHA256(deviceSecret, "clientId"+clientId+"deviceName"+deviceName+"productKey"+productKey))
+password = {deviceSecret}      # 设备密钥本身；也可以用它的 HMAC-SHA256 签名（见 docs/protocol.md），公网请走 TLS
 
 上行  hyperiot/{productKey}/{deviceName}/thing/property/post      {"id":"1","params":{"temperature":25.5}}
 下行  hyperiot/{productKey}/{deviceName}/thing/service/{名}/invoke {"id":"<requestId>","params":{...}}

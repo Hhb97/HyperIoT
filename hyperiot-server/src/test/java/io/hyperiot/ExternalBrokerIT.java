@@ -115,6 +115,11 @@ class ExternalBrokerIT {
                 .path("body").path("result").asText()).isEqualTo("allow");
         assertThat(hook("/api/mqtt/auth", HOOK_TOKEN, Json.object().put("clientid", clientId).put("username", username).put("password", "bad"))
                 .path("body").path("result").asText()).isEqualTo("deny");
+        // the device secret itself is accepted as the password too
+        assertThat(hook("/api/mqtt/auth", HOOK_TOKEN, Json.object().put("clientid", clientId).put("username", username).put("password", f.secret()))
+                .path("body").path("result").asText()).isEqualTo("allow");
+        assertThat(hook("/api/mqtt/auth", HOOK_TOKEN, Json.object().put("clientid", clientId).put("username", username).put("password", f.secret() + "x"))
+                .path("body").path("result").asText()).isEqualTo("deny");
         assertThat(hook("/api/mqtt/auth", HOOK_TOKEN, Json.object().put("clientid", "nope.ghost").put("username", "ghost&nope").put("password", good))
                 .path("body").path("result").asText()).isEqualTo("deny");
         // the platform's own connection is a superuser

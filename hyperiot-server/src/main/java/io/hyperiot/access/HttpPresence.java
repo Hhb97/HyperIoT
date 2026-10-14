@@ -31,7 +31,7 @@ public class HttpPresence {
     public void seen(Device d, String ip) {
         Seen previous = seen.put(d.id(), new Seen(d, System.currentTimeMillis()));
         if (previous == null) {
-            status.online(d, ip);
+            status.onlineNow(d, ip);
         }
     }
 

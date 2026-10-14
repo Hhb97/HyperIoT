@@ -78,8 +78,9 @@ public class EmqxHookController {
         if (d.isEmpty() || !d.get().enabled()) {
             return Map.of("result", "deny");
         }
-        String expected = DeviceCredentials.mqttPassword(d.get().deviceSecret(), id.productKey(), id.deviceName());
-        return Map.of("result", Hmac.safeEquals(expected, req.password()) ? "allow" : "deny", "is_superuser", false);
+        boolean ok = DeviceCredentials.verifyPassword(d.get().deviceSecret(), id.productKey(), id.deviceName(), req.password(),
+                props.getSecurity().isAllowPlainDevicePassword());
+        return Map.of("result", ok ? "allow" : "deny", "is_superuser", false);
     }
 
     @PostMapping("/acl")
