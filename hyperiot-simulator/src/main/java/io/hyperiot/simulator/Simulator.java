@@ -39,7 +39,7 @@ import java.util.concurrent.TimeUnit;
  *
  * # many devices in one process: a CSV with productKey,deviceName,deviceSecret (the file the console's "batch create" exports),
  * # or deviceName,deviceSecret together with --product-key
- * java -jar hyperiot-simulator.jar --devices-file devices.csv --host 192.168.221.130 --interval 3 [--stagger-ms 200] [--quiet true]
+ * java -jar hyperiot-simulator.jar --devices-file devices.csv --host <broker-host> --interval 3 [--stagger-ms 200] [--quiet true]
  * </pre>
  *
  * The secret of a single device can also be given through the HYPERIOT_DEVICE_SECRET environment variable, which keeps it
