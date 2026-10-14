@@ -41,7 +41,7 @@ services:
     restart: unless-stopped
 
   emqx:
-    image: emqx/emqx:5.8.0
+    image: emqx/emqx:5.7.2
     environment:
       EMQX_NODE__NAME: emqx@emqx
       EMQX_DASHBOARD__DEFAULT_PASSWORD: ${EMQX_DASHBOARD_PASSWORD:?set EMQX_DASHBOARD_PASSWORD in .env}

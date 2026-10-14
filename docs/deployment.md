@@ -52,6 +52,41 @@ java -jar hyperiot-server-0.1.0-SNAPSHOT.jar --spring.profiles.active=prod
 
 > EMQX 4.x 的认证 / 授权插件配置方式与 5.x 完全不同，本平台的钩子请求体与响应格式按 5.x 编写，**不兼容 4.x**。
 
+### 在已有的 EMQX 5.7.2 上配置（Dashboard 操作）
+
+下面的钩子地址 `<平台地址>` 必须是**从 EMQX 所在机器能访问到的平台地址**（例如平台跑在开发机上、EMQX 在虚拟机里，就填开发机的局域网 IP 和平台端口，不能填 `localhost`）。
+
+**① 认证**：Dashboard → Access Control → Authentication → Create → *Password-Based* → *HTTP Server*
+
+| 项 | 值 |
+| --- | --- |
+| Method | `POST` |
+| URL | `http://<平台地址>/api/mqtt/auth` |
+| Headers | `content-type: application/json`、`x-hook-token: <HYPERIOT_HOOK_TOKEN>` |
+| Body（键值对） | `clientid` = `${clientid}`，`username` = `${username}`，`password` = `${password}` |
+
+**② 授权**：Dashboard → Access Control → Authorization → Create → *HTTP Server*
+
+| 项 | 值 |
+| --- | --- |
+| Method | `POST` |
+| URL | `http://<平台地址>/api/mqtt/acl` |
+| Headers | 同上（`content-type`、`x-hook-token`） |
+| Body（键值对） | `clientid` = `${clientid}`，`topic` = `${topic}`，`action` = `${action}` |
+
+并在授权设置里把 *No Match* 设为 **Deny**；如果之前启用过 *Built-in Database* 之类的授权源，把它们禁用或排到 HTTP 之后，否则可能先于平台放行。认证同理：只保留这一个认证器，或把它排在最前面。
+
+**③ 平台账号**：不用在 EMQX 里单独建用户。平台以 `HYPERIOT_MQTT_USERNAME`（默认 `hyperiot-platform`）和 `HYPERIOT_MQTT_PASSWORD` 连接，EMQX 会通过上面的认证钩子问平台，平台识别出这个账号并返回超级用户（超级用户不受授权限制，可以订阅 `hyperiot/#` 和 `$SYS`）。所以**平台必须先于设备启动并且 EMQX 能访问到钩子地址**；平台在 EMQX 不可用时每 5 秒重试一次连接。
+
+**④ 上线 / 下线事件**：平台通过订阅 `$SYS/brokers/+/clients/+/connected|disconnected` 得到设备在线状态。EMQX 5.7 里 Dashboard → Management → Settings → System Topics 中“客户端连接 / 断开事件”需要是开启状态（默认开启）。
+
+**⑤ 验证**：
+1. 平台日志出现 `Connected to external MQTT broker …` 和 `Subscribed to $share/hyperiot/hyperiot/#`。
+2. 创建产品和设备后，用 MQTTX 之类的客户端按 `docs/protocol.md` 的凭据规则连接：签名正确能连上，错误会被拒绝。
+3. 设备连上后控制台里应显示“在线”，上报属性能在设备详情里看到。
+
+> 上面的菜单名称和字段名是按 EMQX 5.x 文档写的，没有在 5.7.2 的界面上逐项对照；如果你的界面和描述有出入，以界面为准，保持“方法 / URL / 请求头 / 请求体字段”这几项一致即可。
+
 InfluxDB 中的数据模型：measurement `telemetry`，tag `device_id`、`identifier`，field `num`（浮点，布尔存 1/0）和 `str`（字符串），时间戳毫秒。设备删除时平台会 `DELETE` 该设备的序列；过期由保留策略负责。`last` 聚合在 InfluxDB 下返回的是时间桶的起点，而 JDBC 下返回的是该桶最后一个样本的时间。
 
 > **InfluxDB 部分没有在真实的 InfluxDB 上跑过**：仓库里的测试用一个遵循官方 HTTP API 文档的假服务验证了请求格式（行协议、InfluxQL）、结果解析、建库与保留策略语句，以及整个平台在 influx 模式下的写入 / 查询 / 删除流程。首次接真实 InfluxDB 请先冒烟：上报几条数据 → 控制台看曲线（原始值与聚合）→ 删除设备。
