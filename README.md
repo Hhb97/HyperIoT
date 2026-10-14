@@ -45,6 +45,14 @@ HYPERIOT_DEVICE_SECRET='<脚本打印的设备密钥>' \
 
 模拟器会周期上报温湿度、偶尔“发烧”触发告警规则、响应服务调用、应用属性设置、执行 OTA 升级。在控制台里可以看到数据实时滚动。
 
+**一次模拟多台设备**：在控制台设备页点“批量创建”，下载生成的 `devices.csv`（列：`productKey,deviceName,deviceSecret`），然后：
+
+```bash
+java -jar hyperiot-simulator/target/hyperiot-simulator-0.1.0-SNAPSHOT.jar   --devices-file devices.csv --host <broker地址> --port 1883 --interval 3
+```
+
+一个进程里每台设备各自独立连接、上报、应答指令。可选参数：`--stagger-ms`（设备依次连接的间隔，默认 200）、`--quiet true`（不打印每条消息，设备多时建议开）。清单也可以只有两列 `deviceName,deviceSecret`，再配合 `--product-key`。
+
 > 默认端口 8080 / 1883 被占用时：`SERVER_PORT=18080 HYPERIOT_MQTT_PORT=11883`（同时把 `HYPERIOT_PUBLIC_BASE_URL` 改成对应地址）。
 
 ### 生产栈：PostgreSQL + Kafka + EMQX + InfluxDB 1.8

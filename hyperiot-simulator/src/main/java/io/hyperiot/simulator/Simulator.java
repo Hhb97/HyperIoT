@@ -13,12 +13,16 @@ import org.eclipse.paho.client.mqttv3.persist.MemoryPersistence;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 import java.net.URI;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.util.ArrayList;
 import java.util.HexFormat;
+import java.util.List;
 import java.util.Map;
 import java.util.Random;
 import java.util.concurrent.Executors;
@@ -30,11 +34,16 @@ import java.util.concurrent.TimeUnit;
  * invocations, applies property settings and performs OTA upgrades (download, verify, report progress).
  *
  * <pre>
+ * # one device
  * java -jar hyperiot-simulator.jar --product-key abc123 --device-name dev1 --secret ... [--host localhost] [--port 1883] [--interval 5]
+ *
+ * # many devices in one process: a CSV with productKey,deviceName,deviceSecret (the file the console's "batch create" exports),
+ * # or deviceName,deviceSecret together with --product-key
+ * java -jar hyperiot-simulator.jar --devices-file devices.csv --host 192.168.221.130 --interval 3 [--stagger-ms 200] [--quiet true]
  * </pre>
  *
- * The secret can also be given through the HYPERIOT_DEVICE_SECRET environment variable, which keeps it out of the
- * process list.
+ * The secret of a single device can also be given through the HYPERIOT_DEVICE_SECRET environment variable, which keeps it
+ * out of the process list.
  */
 public final class Simulator {
 
@@ -52,8 +61,10 @@ public final class Simulator {
     private volatile String mode = "auto";
     private volatile boolean fan = false;
     private volatile String firmwareVersion;
+    private final boolean quiet;
 
-    private Simulator(String productKey, String deviceName, String firmwareVersion) {
+    private Simulator(String productKey, String deviceName, String firmwareVersion, boolean quiet) {
+        this.quiet = quiet;
         this.productKey = productKey;
         this.deviceName = deviceName;
         this.base = "hyperiot/" + productKey + "/" + deviceName + "/";
@@ -62,21 +73,90 @@ public final class Simulator {
 
     public static void main(String[] args) throws Exception {
         Map<String, String> a = parse(args);
-        String pk = require(a, "product-key");
-        String dn = require(a, "device-name");
-        String secret = a.getOrDefault("secret", System.getenv("HYPERIOT_DEVICE_SECRET"));
-        if (secret == null || secret.isBlank()) {
-            System.err.println("missing --secret (or HYPERIOT_DEVICE_SECRET)");
-            System.exit(2);
-        }
         String host = a.getOrDefault("host", "localhost");
         int port = Integer.parseInt(a.getOrDefault("port", "1883"));
         int interval = Integer.parseInt(a.getOrDefault("interval", "5"));
-        Simulator sim = new Simulator(pk, dn, a.getOrDefault("firmware", "1.0.0"));
-        sim.run("tcp://" + host + ":" + port, secret, interval);
+        String firmware = a.getOrDefault("firmware", "1.0.0");
+        boolean quiet = Boolean.parseBoolean(a.getOrDefault("quiet", "false"));
+        String brokerUrl = "tcp://" + host + ":" + port;
+
+        List<String[]> devices = new ArrayList<>(); // {productKey, deviceName, secret}
+        if (a.containsKey("devices-file")) {
+            devices.addAll(readDevices(Path.of(a.get("devices-file")), a.get("product-key")));
+            if (devices.isEmpty()) {
+                System.err.println("no devices found in " + a.get("devices-file"));
+                System.exit(2);
+            }
+        } else {
+            String secret = a.getOrDefault("secret", System.getenv("HYPERIOT_DEVICE_SECRET"));
+            if (secret == null || secret.isBlank()) {
+                System.err.println("missing --secret (or HYPERIOT_DEVICE_SECRET), or use --devices-file");
+                System.exit(2);
+            }
+            devices.add(new String[]{require(a, "product-key"), require(a, "device-name"), secret});
+        }
+
+        long staggerMs = Long.parseLong(a.getOrDefault("stagger-ms", devices.size() > 1 ? "200" : "0"));
+        List<Simulator> running = new ArrayList<>();
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> running.forEach(Simulator::stop)));
+        System.out.println("starting " + devices.size() + " simulated device(s) against " + brokerUrl);
+        for (String[] d : devices) {
+            Simulator sim = new Simulator(d[0], d[1], firmware, quiet);
+            running.add(sim);
+            try {
+                sim.start(brokerUrl, d[2], interval);
+            } catch (Exception e) {
+                System.err.println("[" + d[1] + "] could not start: " + e.getMessage());
+            }
+            if (staggerMs > 0) {
+                Thread.sleep(staggerMs); // do not connect hundreds of devices in the same instant
+            }
+        }
+        Thread.currentThread().join();
     }
 
-    private void run(String brokerUrl, String secret, int intervalSeconds) throws Exception {
+    /** CSV lines: productKey,deviceName,deviceSecret or deviceName,deviceSecret (then --product-key is used). */
+    static List<String[]> readDevices(Path file, String defaultProductKey) throws java.io.IOException {
+        List<String[]> out = new ArrayList<>();
+        for (String raw : Files.readAllLines(file, StandardCharsets.UTF_8)) {
+            String line = raw.replace("\uFEFF", "").trim();
+            if (line.isEmpty() || line.startsWith("#")) {
+                continue;
+            }
+            String[] f = line.split("[,;\t]");
+            for (int i = 0; i < f.length; i++) {
+                f[i] = f[i].trim().replaceAll("^\"|\"$", "");
+            }
+            if (f[0].equalsIgnoreCase("productKey") || f[0].equalsIgnoreCase("deviceName")) {
+                continue; // header
+            }
+            if (f.length >= 3) {
+                out.add(new String[]{f[0], f[1], f[2]});
+            } else if (f.length == 2 && defaultProductKey != null) {
+                out.add(new String[]{defaultProductKey, f[0], f[1]});
+            } else {
+                System.err.println("skipping a line that is not productKey,deviceName,secret (or deviceName,secret with --product-key)");
+            }
+        }
+        return out;
+    }
+
+    private void stop() {
+        try {
+            scheduler.shutdownNow();
+            if (client != null && client.isConnected()) {
+                client.disconnect(1000);
+            }
+        } catch (Exception ignored) {
+            // exiting
+        }
+    }
+
+    private void log(String message) {
+        System.out.println("[" + deviceName + "] " + message);
+    }
+
+    private void start(String brokerUrl, String secret, int intervalSeconds) throws Exception {
         String clientId = productKey + "." + deviceName;
         // password = HMAC-SHA256(secret, "clientId" + clientId + "deviceName" + dn + "productKey" + pk), the secret itself is never sent
         String password = hmacHex(secret, "clientId" + clientId + "deviceName" + deviceName + "productKey" + productKey);
@@ -86,7 +166,7 @@ public final class Simulator {
             public void connectComplete(boolean reconnect, String serverURI) {
                 try {
                     client.subscribe(base + "#", 1);
-                    System.out.println((reconnect ? "reconnected" : "connected") + " to " + serverURI + " as " + clientId);
+                    log((reconnect ? "reconnected" : "connected") + " to " + serverURI + " as " + clientId);
                     publish("ota/inform", JSON.createObjectNode().put("version", firmwareVersion));
                 } catch (Exception e) {
                     e.printStackTrace();
@@ -95,7 +175,7 @@ public final class Simulator {
 
             @Override
             public void connectionLost(Throwable cause) {
-                System.out.println("connection lost: " + cause);
+                log("connection lost: " + cause);
             }
 
             @Override
@@ -103,7 +183,7 @@ public final class Simulator {
                 try {
                     onDownlink(topic.substring(base.length()), JSON.readTree(message.getPayload()));
                 } catch (Exception e) {
-                    System.err.println("bad downlink on " + topic + ": " + e);
+                    System.err.println("[" + deviceName + "] bad downlink on " + topic + ": " + e);
                 }
             }
 
@@ -119,18 +199,9 @@ public final class Simulator {
         o.setKeepAliveInterval(30);
         client.connect(o);
 
-        scheduler.scheduleAtFixedRate(this::report, 1, intervalSeconds, TimeUnit.SECONDS);
-        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
-            try {
-                scheduler.shutdownNow();
-                if (client.isConnected()) {
-                    client.disconnect(1000);
-                }
-            } catch (Exception ignored) {
-                // exiting
-            }
-        }));
-        Thread.currentThread().join();
+        // a random start offset spreads many devices over the reporting interval
+        long offsetMs = 1000 + random.nextInt(Math.max(1, intervalSeconds * 1000));
+        scheduler.scheduleAtFixedRate(this::report, offsetMs, intervalSeconds * 1000L, TimeUnit.MILLISECONDS);
     }
 
     private void report() {
@@ -152,18 +223,22 @@ public final class Simulator {
             msg.put("ts", System.currentTimeMillis());
             msg.set("params", params);
             publish("thing/property/post", msg);
-            System.out.println("reported " + params);
+            if (!quiet) {
+                log("reported " + params);
+            }
             if (temperature > 70) {
                 publish("thing/event/overheat/post", JSON.createObjectNode().put("ts", System.currentTimeMillis())
                         .set("params", JSON.createObjectNode().put("temp", temperature)));
             }
         } catch (Exception e) {
-            System.err.println("report failed: " + e);
+            System.err.println("[" + deviceName + "] report failed: " + e);
         }
     }
 
     private void onDownlink(String suffix, JsonNode payload) {
-        System.out.println("<- " + suffix + " " + payload);
+        if (!quiet) {
+            log("<- " + suffix + " " + payload);
+        }
         if (suffix.startsWith("thing/service/") && suffix.endsWith("/invoke")) {
             String service = suffix.substring("thing/service/".length(), suffix.length() - "/invoke".length());
             if ("fanOn".equals(service)) {
@@ -225,7 +300,7 @@ public final class Simulator {
             m.setQos(1);
             client.publish(base + suffix, m);
         } catch (Exception e) {
-            System.err.println("publish " + suffix + " failed: " + e);
+            System.err.println("[" + deviceName + "] publish " + suffix + " failed: " + e);
         }
     }
 
