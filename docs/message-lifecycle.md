@@ -101,7 +101,7 @@ sequenceDiagram
 
 | 上行消息 | Kafka topic | 谁消费 | 落地位置 |
 | --- | --- | --- | --- |
-| 属性上报 | `hyperiot.property` | `telemetry-store` | 20 万行队列，每 500ms 或 500 行批量写 **InfluxDB**（失败重试 3 次） |
+| 属性上报 | `hyperiot.property` | `telemetry-store` | 20 万行队列，每 500ms 或 500 行批量写 **InfluxDB**（失败重试 3 次）。详见 [telemetry-pipeline.md](telemetry-pipeline.md) |
 | | | `shadow` | 内存合并 `reported`，每秒写 **PostgreSQL**；上报值等于期望值则清除该项期望值 |
 | | | `rule-engine` | 评估规则；条件满足则在 PostgreSQL 写告警、执行动作；不再满足则恢复告警 |
 | | | `realtime` | 经 WebSocket 推给控制台，不落库 |
