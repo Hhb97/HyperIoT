@@ -1,0 +1,59 @@
+server:
+  port: 8080
+  shutdown: graceful
+
+spring:
+  application:
+    name: hyperiot
+  datasource:
+    # Default: file-based H2 in PostgreSQL mode, zero setup. Use the "postgres" profile for production.
+    url: jdbc:h2:file:./data/hyperiot;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DEFAULT_NULL_ORDERING=HIGH
+    username: sa
+    password: ""
+  flyway:
+    enabled: true
+  servlet:
+    multipart:
+      max-file-size: 64MB
+      max-request-size: 66MB
+  jackson:
+    default-property-inclusion: non_null
+    deserialization:
+      fail-on-unknown-properties: false
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus,metrics
+  endpoint:
+    health:
+      show-details: never
+
+springdoc:
+  swagger-ui:
+    path: /swagger-ui.html
+
+hyperiot:
+  public-base-url: ${HYPERIOT_PUBLIC_BASE_URL:http://localhost:8080}
+  mqtt:
+    mode: ${HYPERIOT_MQTT_MODE:embedded}
+    port: ${HYPERIOT_MQTT_PORT:1883}
+    broker-url: ${HYPERIOT_MQTT_BROKER_URL:tcp://localhost:1883}
+    username: ${HYPERIOT_MQTT_USERNAME:hyperiot-platform}
+    password: ${HYPERIOT_MQTT_PASSWORD:}
+  bus:
+    type: ${HYPERIOT_BUS:memory}
+    bootstrap-servers: ${HYPERIOT_KAFKA_SERVERS:localhost:9092}
+  security:
+    admin-username: ${HYPERIOT_ADMIN_USERNAME:admin}
+    admin-password: ${HYPERIOT_ADMIN_PASSWORD:}
+    jwt-secret: ${HYPERIOT_JWT_SECRET:}
+    hook-token: ${HYPERIOT_HOOK_TOKEN:}
+  tcp:
+    enabled: ${HYPERIOT_TCP_ENABLED:false}
+    port: ${HYPERIOT_TCP_PORT:9100}
+  webhook:
+    allow-private-addresses: ${HYPERIOT_WEBHOOK_ALLOW_PRIVATE:false}
+  ota:
+    directory: ${HYPERIOT_OTA_DIR:./data/firmware}

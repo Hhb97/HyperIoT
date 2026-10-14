@@ -1,0 +1,7 @@
+spring:
+  datasource:
+    url: ${HYPERIOT_DB_URL:jdbc:postgresql://localhost:5432/hyperiot}
+    username: ${HYPERIOT_DB_USER:hyperiot}
+    password: ${HYPERIOT_DB_PASSWORD:}
+    hikari:
+      maximum-pool-size: 20

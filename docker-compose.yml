@@ -1,0 +1,45 @@
+# Single-node deployment: HyperIoT with its built-in MQTT broker and PostgreSQL.
+#   cp .env.example .env   # then fill in the secrets
+#   docker compose up -d --build
+# Console: http://localhost:8080   MQTT: localhost:1883
+services:
+  hyperiot:
+    build: .
+    image: hyperiot:local
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      SPRING_PROFILES_ACTIVE: postgres
+      HYPERIOT_DB_URL: jdbc:postgresql://postgres:5432/hyperiot
+      HYPERIOT_DB_USER: hyperiot
+      HYPERIOT_DB_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      HYPERIOT_ADMIN_PASSWORD: ${HYPERIOT_ADMIN_PASSWORD:?set HYPERIOT_ADMIN_PASSWORD in .env}
+      HYPERIOT_JWT_SECRET: ${HYPERIOT_JWT_SECRET:?set HYPERIOT_JWT_SECRET in .env (at least 32 characters)}
+      HYPERIOT_PUBLIC_BASE_URL: ${HYPERIOT_PUBLIC_BASE_URL:-http://localhost:8080}
+    ports:
+      - "8080:8080"
+      - "1883:1883"
+    volumes:
+      - hyperiot-data:/data
+    restart: unless-stopped
+
+  postgres:
+    # Swap for timescale/timescaledb:latest-pg16 to get hypertables for the telemetry table (see docs/deployment.md)
+    image: postgres:16
+    environment:
+      POSTGRES_DB: hyperiot
+      POSTGRES_USER: hyperiot
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hyperiot -d hyperiot"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+volumes:
+  hyperiot-data:
+  pg-data:

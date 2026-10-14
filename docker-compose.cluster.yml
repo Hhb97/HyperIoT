@@ -1,0 +1,108 @@
+# Cluster-style topology from the architecture diagram: EMQX (access) -> Kafka (bus) -> HyperIoT (services) -> PostgreSQL.
+# EXPERIMENTAL: the EMQX settings below follow the EMQX 5 documentation but have not been run against a live
+# EMQX in this repository's CI. Read docs/deployment.md before using it.
+#
+#   cp .env.example .env   # fill in the secrets
+#   docker compose -f docker-compose.cluster.yml up -d --build
+services:
+  hyperiot:
+    build: .
+    image: hyperiot:local
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_started
+      emqx:
+        condition: service_healthy
+    environment:
+      SPRING_PROFILES_ACTIVE: postgres,kafka
+      HYPERIOT_DB_URL: jdbc:postgresql://postgres:5432/hyperiot
+      HYPERIOT_DB_USER: hyperiot
+      HYPERIOT_DB_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      HYPERIOT_ADMIN_PASSWORD: ${HYPERIOT_ADMIN_PASSWORD:?set HYPERIOT_ADMIN_PASSWORD in .env}
+      HYPERIOT_JWT_SECRET: ${HYPERIOT_JWT_SECRET:?set HYPERIOT_JWT_SECRET in .env (at least 32 characters)}
+      HYPERIOT_PUBLIC_BASE_URL: ${HYPERIOT_PUBLIC_BASE_URL:-http://localhost:8080}
+      HYPERIOT_KAFKA_SERVERS: kafka:9092
+      HYPERIOT_MQTT_MODE: external
+      HYPERIOT_MQTT_BROKER_URL: tcp://emqx:1883
+      HYPERIOT_MQTT_USERNAME: hyperiot-platform
+      HYPERIOT_MQTT_PASSWORD: ${HYPERIOT_MQTT_PASSWORD:?set HYPERIOT_MQTT_PASSWORD in .env}
+      HYPERIOT_HOOK_TOKEN: ${HYPERIOT_HOOK_TOKEN:?set HYPERIOT_HOOK_TOKEN in .env}
+    ports:
+      - "8080:8080"
+    volumes:
+      - hyperiot-data:/data
+    restart: unless-stopped
+
+  emqx:
+    image: emqx/emqx:5.8.0
+    environment:
+      EMQX_NODE__NAME: emqx@emqx
+      EMQX_DASHBOARD__DEFAULT_PASSWORD: ${EMQX_DASHBOARD_PASSWORD:?set EMQX_DASHBOARD_PASSWORD in .env}
+      # Device authentication: delegated to HyperIoT (HMAC password check)
+      EMQX_AUTHENTICATION__1__MECHANISM: password_based
+      EMQX_AUTHENTICATION__1__BACKEND: http
+      EMQX_AUTHENTICATION__1__METHOD: post
+      EMQX_AUTHENTICATION__1__URL: http://hyperiot:8080/api/mqtt/auth
+      EMQX_AUTHENTICATION__1__HEADERS__content-type: application/json
+      EMQX_AUTHENTICATION__1__HEADERS__x-hook-token: ${HYPERIOT_HOOK_TOKEN}
+      EMQX_AUTHENTICATION__1__BODY__clientid: "$${clientid}"
+      EMQX_AUTHENTICATION__1__BODY__username: "$${username}"
+      EMQX_AUTHENTICATION__1__BODY__password: "$${password}"
+      # Topic authorization: devices stay inside hyperiot/{productKey}/{deviceName}/
+      EMQX_AUTHORIZATION__NO_MATCH: deny
+      EMQX_AUTHORIZATION__SOURCES__1__TYPE: http
+      EMQX_AUTHORIZATION__SOURCES__1__METHOD: post
+      EMQX_AUTHORIZATION__SOURCES__1__URL: http://hyperiot:8080/api/mqtt/acl
+      EMQX_AUTHORIZATION__SOURCES__1__HEADERS__content-type: application/json
+      EMQX_AUTHORIZATION__SOURCES__1__HEADERS__x-hook-token: ${HYPERIOT_HOOK_TOKEN}
+      EMQX_AUTHORIZATION__SOURCES__1__BODY__clientid: "$${clientid}"
+      EMQX_AUTHORIZATION__SOURCES__1__BODY__topic: "$${topic}"
+      EMQX_AUTHORIZATION__SOURCES__1__BODY__action: "$${action}"
+    ports:
+      - "1883:1883"
+      - "18083:18083"
+    healthcheck:
+      test: ["CMD", "/opt/emqx/bin/emqx", "ctl", "status"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  kafka:
+    image: apache/kafka:3.8.0
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: hyperiot
+      POSTGRES_USER: hyperiot
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hyperiot -d hyperiot"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+volumes:
+  hyperiot-data:
+  kafka-data:
+  pg-data:

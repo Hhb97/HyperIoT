@@ -1,0 +1,3 @@
+hyperiot:
+  bus:
+    type: kafka

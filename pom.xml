@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <parent>
+    <groupId>org.springframework.boot</groupId>
+    <artifactId>spring-boot-starter-parent</artifactId>
+    <version>3.3.5</version>
+    <relativePath/>
+  </parent>
+
+  <groupId>io.hyperiot</groupId>
+  <artifactId>hyperiot-parent</artifactId>
+  <version>0.1.0-SNAPSHOT</version>
+  <packaging>pom</packaging>
+  <name>HyperIoT</name>
+  <description>General-purpose IoT platform: device access, thing model, shadow, rules, commands, OTA</description>
+
+  <modules>
+    <module>hyperiot-server</module>
+    <module>hyperiot-simulator</module>
+  </modules>
+
+  <properties>
+    <java.version>17</java.version>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    <moquette.version>0.17</moquette.version>
+    <paho.version>1.2.5</paho.version>
+    <springdoc.version>2.6.0</springdoc.version>
+    <h2.version>2.2.220</h2.version>
+  </properties>
+</project>

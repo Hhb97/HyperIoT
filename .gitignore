@@ -1,0 +1,20 @@
+# build output
+target/
+*.class
+
+# local runtime data (H2 database, uploaded firmware)
+data/
+*.mv.db
+*.trace.db
+
+# secrets and local config
+.env
+application-local.yml
+application-local.properties
+
+# IDE / OS
+.idea/
+*.iml
+.vscode/
+.DS_Store
+Thumbs.db
