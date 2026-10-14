@@ -77,6 +77,8 @@ java -jar hyperiot-server-0.1.0-SNAPSHOT.jar --spring.profiles.active=prod
 
 并在授权设置里把 *No Match* 设为 **Deny**；已有的其它认证 / 授权源（如 Built-in Database）要禁用或排到 HTTP 之后，否则可能先于平台放行或拒绝。
 
+> **也可以用脚本一次配好 ①②（并把授权的“无匹配”设为拒绝）**：`scripts/setup-emqx.sh`，通过 EMQX 的 REST API 创建或更新这两个 HTTP 钩子，`remove` 参数可撤销。Dashboard 密码、钩子令牌通过环境变量传入。脚本会修改 EMQX 的安全配置，请自己运行并核对输出；它的请求格式对照 EMQX 5.7.2 的 swagger 文档编写，并用一个模拟的 EMQX 服务验证过请求内容，尚未在真实 EMQX 上运行。
+
 **③ 平台账号**：不用在 EMQX 里单独建用户。平台以 `HYPERIOT_MQTT_USERNAME`（默认 `hyperiot-platform`）和 `HYPERIOT_MQTT_PASSWORD` 连接，EMQX 通过上面的认证钩子问平台，平台识别出这个账号并返回超级用户（超级用户不受授权限制，可订阅 `hyperiot/#` 和 `$SYS`）。平台在 EMQX 不可用或钩子还没配好时每 5 秒重试一次连接。
 
 **④ 上线 / 下线事件**：平台订阅 `$SYS/brokers/+/clients/+/connected|disconnected` 得到设备在线状态，EMQX 的系统主题事件需要开启（5.x 默认开启）。
