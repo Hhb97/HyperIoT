@@ -22,6 +22,8 @@
 
 ### 在线状态
 
+> 认证、上线下线、各处队列的完整说明见 [device-lifecycle.md](device-lifecycle.md)。
+
 - 内置 Broker：Moquette 的连接 / 断开拦截器。重连时旧连接的断开事件可能晚于新连接的建立，处理时会检查该 clientId 是否仍在线，避免误标离线。
 - 外接 EMQX：订阅 `$SYS/brokers/+/clients/+/connected|disconnected`，或由 EMQX 调用 `POST /api/mqtt/event`。
 - HTTP 设备：首次上报视为上线，5 分钟无上报视为离线。TCP：连接生命周期。
