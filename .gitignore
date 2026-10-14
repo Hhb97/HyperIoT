@@ -3,7 +3,8 @@ target/
 *.class
 
 # local runtime data (H2 database, uploaded firmware)
-data/
+/data/
+/hyperiot-server/data/
 *.mv.db
 *.trace.db
 
