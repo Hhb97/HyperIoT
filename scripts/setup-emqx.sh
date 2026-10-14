@@ -5,9 +5,9 @@
 #
 #   export EMQX_ADMIN_PASSWORD='...'                         # EMQX Dashboard password
 #   export HYPERIOT_HOOK_TOKEN='...'                         # same value as hyperiot.security.hook-token
-#   export HYPERIOT_HOOK_BASE=http://192.168.221.1:8888      # platform address as seen FROM EMQX (not localhost)
-#   EMQX_URL=http://192.168.221.130:18083 ./scripts/setup-emqx.sh          # create or update the hooks
-#   EMQX_URL=http://192.168.221.130:18083 ./scripts/setup-emqx.sh remove   # take them out again
+#   export HYPERIOT_HOOK_BASE=http://<platform-host>:8888      # platform address as seen FROM EMQX (not localhost)
+#   EMQX_URL=http://<emqx-host>:18083 ./scripts/setup-emqx.sh          # create or update the hooks
+#   EMQX_URL=http://<emqx-host>:18083 ./scripts/setup-emqx.sh remove   # take them out again
 #
 # The request shapes were checked against the swagger document of EMQX 5.7.2 (GET /api-docs/swagger.json) but this
 # script has not been run against a live EMQX by its author: read the output, and check the Dashboard afterwards.
@@ -49,7 +49,7 @@ if [ "$ACTION" = "remove" ]; then
 fi
 
 : "${HYPERIOT_HOOK_TOKEN:?set HYPERIOT_HOOK_TOKEN}"
-: "${HYPERIOT_HOOK_BASE:?set HYPERIOT_HOOK_BASE, e.g. http://192.168.221.1:8888}"
+: "${HYPERIOT_HOOK_BASE:?set HYPERIOT_HOOK_BASE, e.g. http://<platform-host>:8888}"
 case "$HYPERIOT_HOOK_TOKEN" in *[!A-Za-z0-9._-]*) echo "HYPERIOT_HOOK_TOKEN may only contain letters, digits, . _ -" >&2; exit 1;; esac
 BASE="${HYPERIOT_HOOK_BASE%/}"
 
