@@ -12,9 +12,10 @@
 
   <dependencies>
     <dependency>
-      <groupId>org.eclipse.paho</groupId>
-      <artifactId>org.eclipse.paho.client.mqttv3</artifactId>
-      <version>${paho.version}</version>
+      <!-- Netty based: all devices share a few event-loop threads (Paho needs ~4 threads per client) -->
+      <groupId>com.hivemq</groupId>
+      <artifactId>hivemq-mqtt-client</artifactId>
+      <version>1.3.17</version>
     </dependency>
     <dependency>
       <groupId>com.fasterxml.jackson.core</groupId>
