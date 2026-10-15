@@ -19,3 +19,6 @@ application-local.properties
 .vscode/
 .DS_Store
 Thumbs.db
+
+# device lists contain secrets
+/devices*.csv

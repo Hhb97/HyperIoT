@@ -51,7 +51,28 @@ HYPERIOT_DEVICE_SECRET='<脚本打印的设备密钥>' \
 java -jar hyperiot-simulator/target/hyperiot-simulator-0.1.0-SNAPSHOT.jar   --devices-file devices.csv --host <broker地址> --port 1883 --interval 3
 ```
 
-一个进程里每台设备各自独立连接、上报、应答指令。可选参数：`--stagger-ms`（设备依次连接的间隔，默认 200）、`--quiet true`（不打印每条消息，设备多时建议开）。清单也可以只有两列 `deviceName,deviceSecret`，再配合 `--product-key`。
+一个进程里每台设备各自独立连接、上报、应答指令。可选参数：
+
+| 参数 | 默认 | 说明 |
+| --- | --- | --- |
+| `--interval` | 5 | 上报间隔（秒，可用小数） |
+| `--connect-rate` | 200 | 每秒新建多少个连接（旧参数 `--stagger-ms` 仍可用，换算成 1000/N） |
+| `--limit` | 全部 | 只用清单里的前 N 台，方便从 1000 台逐步加到 1 万台 |
+| `--qos` | 1 | 上报的 QoS，0 或 1 |
+| `--keepalive` | 60 | MQTT 心跳（秒） |
+| `--quiet` | 超过 20 台自动开 | 不打印每台设备的日志，只每 5 秒输出一行汇总 |
+
+清单也可以只有两列 `deviceName,deviceSecret`，再配合 `--product-key`。
+
+**模拟 1 万台设备**：批量创建接口每次最多 500 台，用脚本循环生成清单（清单含设备密钥，不要提交到 git）：
+
+```bash
+HYPERIOT_URL=http://localhost:8080 HYPERIOT_ADMIN_PASSWORD=... ./scripts/create-devices.sh <productKey> 10000 devices.csv
+java -Xmx2g -jar hyperiot-simulator/target/hyperiot-simulator-0.1.0-SNAPSHOT.jar --devices-file devices.csv --host <broker地址> --interval 10 --connect-rate 300
+```
+
+所有设备共用一组 Netty 线程和一个调度器（线程数与设备数无关），1 万台约占 0.5 GB 内存；运行时每 5 秒打印一行：在线数、每秒发送/确认条数、失败数、下行条数、被拒绝数、重连次数、堆内存。被 broker 拒绝的设备每 10–30 秒重试一次（密码错了会一直被拒，但 EMQX 在平台认证钩子暂时调不通时也会返回 NOT_AUTHORIZED，所以不能放弃）；断线按指数退避加随机抖动重连，平台重启后不会同时涌回来。
+> 机器的限制：Windows 动态端口默认只有约 1.6 万个，单机连同一个 broker 到 1 万台没问题，再多要放宽端口范围或换机器；上报速率 = 设备数 ÷ 间隔，1 万台、间隔 10 秒约 1000 条/秒。
 
 > 默认端口 8080 / 1883 被占用时：`SERVER_PORT=18080 HYPERIOT_MQTT_PORT=11883`（同时把 `HYPERIOT_PUBLIC_BASE_URL` 改成对应地址）。
 

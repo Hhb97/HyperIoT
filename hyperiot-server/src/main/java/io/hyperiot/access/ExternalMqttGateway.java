@@ -21,11 +21,24 @@ import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Component;
 
 import java.nio.charset.StandardCharsets;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * Connects the platform to an external MQTT broker cluster (EMQX). Devices authenticate against the broker, which
  * calls back {@code /api/mqtt/auth} and {@code /api/mqtt/acl}; the platform subscribes with a shared subscription
  * so several nodes split the uplink traffic, and publishes downlink messages through the same connection.
+ *
+ * <p>The Paho callback does nothing but hand a message to a worker and return. Paho has one callback thread and an
+ * inbound queue of only 10 messages: once it is full the thread that reads the socket waits for the callback thread, and
+ * a callback that itself waits for the broker (the acknowledgement of a reply it publishes arrives through the very same
+ * socket) is a deadlock. The connection then looks dead, Paho reconnects after the keep-alive timeout and every device
+ * connect / disconnect event of that time is lost. Messages of one device always go to the same worker, so their order
+ * (connected, data, disconnected) is kept.
  */
 @Component
 @ConditionalOnProperty(name = "hyperiot.mqtt.mode", havingValue = "external")
@@ -43,6 +56,8 @@ public class ExternalMqttGateway implements DownlinkChannel {
     private final ApplicationEventPublisher events;
     private volatile MqttClient client;
     private volatile boolean stopping;
+    private final ThreadPoolExecutor[] workers;
+    private final AtomicLong dropped = new AtomicLong();
 
     public ExternalMqttGateway(HyperIotProperties props, UplinkProcessor uplink, DeviceService devices, DeviceStatusService status,
                                ApplicationEventPublisher events) {
@@ -51,6 +66,16 @@ public class ExternalMqttGateway implements DownlinkChannel {
         this.devices = devices;
         this.status = status;
         this.events = events;
+        this.workers = new ThreadPoolExecutor[Math.max(1, cfg.getWorkers())];
+        for (int i = 0; i < workers.length; i++) {
+            AtomicInteger n = new AtomicInteger();
+            int id = i;
+            workers[i] = new ThreadPoolExecutor(1, 1, 0, TimeUnit.MILLISECONDS, new ArrayBlockingQueue<>(cfg.getWorkerQueue()), r -> {
+                Thread t = new Thread(r, "mqtt-uplink-" + id);
+                t.setDaemon(true);
+                return t;
+            }, new ThreadPoolExecutor.AbortPolicy());
+        }
     }
 
     /** Published when the connection to the broker came back after a loss: connect / disconnect events may have been missed. */
@@ -85,15 +110,7 @@ public class ExternalMqttGateway implements DownlinkChannel {
 
                     @Override
                     public void messageArrived(String topic, MqttMessage message) {
-                        try {
-                            if (topic.startsWith("$SYS/")) {
-                                onSystemEvent(topic, message.getPayload());
-                                return;
-                            }
-                            uplink.onMqtt(topic, message.getPayload());
-                        } catch (Exception e) {
-                            log.warn("Failed to process message on {}: {}", topic, e.toString());
-                        }
+                        dispatch(topic, message.getPayload()); // must return at once, see the class comment
                     }
 
                     @Override
@@ -104,6 +121,7 @@ public class ExternalMqttGateway implements DownlinkChannel {
                 o.setAutomaticReconnect(true);
                 o.setCleanSession(true);
                 o.setKeepAliveInterval(30);
+                c.setTimeToWait(30_000); // a blocking call gives up instead of hanging for ever
                 o.setUserName(cfg.getUsername());
                 o.setPassword(cfg.getPassword().toCharArray());
                 c.connect(o);
@@ -120,6 +138,42 @@ public class ExternalMqttGateway implements DownlinkChannel {
                 }
             }
         }
+    }
+
+    /** Hands the message to the worker that owns its device; never blocks, a full queue drops the message and says so. */
+    private void dispatch(String topic, byte[] payload) {
+        ThreadPoolExecutor worker = workers[Math.floorMod(routingKey(topic).hashCode(), workers.length)];
+        try {
+            worker.execute(() -> handle(topic, payload));
+        } catch (RejectedExecutionException e) {
+            if (!stopping && dropped.getAndIncrement() % 1000 == 0) {
+                log.warn("MQTT message queue is full, {} messages dropped so far (the platform is not keeping up)", dropped.get());
+            }
+        }
+    }
+
+    private void handle(String topic, byte[] payload) {
+        try {
+            if (topic.startsWith("$SYS/")) {
+                onSystemEvent(topic, payload);
+                return;
+            }
+            uplink.onMqtt(topic, payload);
+        } catch (Exception e) {
+            log.warn("Failed to process message on {}: {}", topic, e.toString());
+        }
+    }
+
+    /** The client id of the device a message is about: {@code productKey.deviceName}, for device topics and for $SYS events alike. */
+    static String routingKey(String topic) {
+        String[] p = topic.split("/", 7);
+        if (topic.startsWith("$SYS/") && p.length >= 6) { // $SYS/brokers/<node>/clients/<clientid>/connected
+            return p[4];
+        }
+        if (p.length >= 3 && "hyperiot".equals(p[0])) { // hyperiot/<productKey>/<deviceName>/...
+            return p[1] + "." + p[2];
+        }
+        return topic;
     }
 
     private void subscribe(MqttClient c) {
@@ -173,6 +227,9 @@ public class ExternalMqttGateway implements DownlinkChannel {
     @PreDestroy
     void stop() {
         stopping = true;
+        for (ThreadPoolExecutor w : workers) {
+            w.shutdownNow();
+        }
         MqttClient c = client;
         if (c != null) {
             try {

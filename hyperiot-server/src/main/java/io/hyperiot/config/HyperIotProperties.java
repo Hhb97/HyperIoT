@@ -67,6 +67,15 @@ public class HyperIotProperties {
         public void setPassword(String password) { this.password = password; }
         public String getClientId() { return clientId; }
         public void setClientId(String clientId) { this.clientId = clientId; }
+        /** Threads that process uplink messages and device connect / disconnect events from the external broker. */
+        private int workers = 8;
+        /** Messages each worker may have waiting; beyond that messages are dropped (and counted in the log). */
+        private int workerQueue = 20_000;
+
+        public int getWorkers() { return workers; }
+        public void setWorkers(int workers) { this.workers = workers; }
+        public int getWorkerQueue() { return workerQueue; }
+        public void setWorkerQueue(int workerQueue) { this.workerQueue = workerQueue; }
         public String getSubscription() { return subscription; }
         public void setSubscription(String subscription) { this.subscription = subscription; }
         public boolean isEmbedded() { return "embedded".equalsIgnoreCase(mode); }

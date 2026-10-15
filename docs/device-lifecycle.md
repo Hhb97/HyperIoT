@@ -189,6 +189,15 @@ flowchart LR
 
 每个设备一个令牌桶（`UplinkProcessor.RateBucket`）：每秒 `rate-limit-per-second`（默认 50）个令牌，容量为 2 倍（突发 100）。超限的消息**直接丢弃**并写一条设备日志，不进入总线。桶按设备缓存，5 分钟无访问淘汰。目的：一个异常设备（死循环上报）不能拖垮整个平台。设为 `0` 关闭。
 
+### 3.1b 外部 Broker 的接收队列（EMQX 模式）
+
+平台用一个 Paho 客户端连 EMQX。Paho 只有**一个回调线程和一个只能放 10 条消息的入站队列**，所以 `messageArrived` 里**不做任何处理**，只把消息交给 worker 线程就返回（`ExternalMqttGateway.dispatch`）：
+
+- 共 `hyperiot.mqtt.workers`（默认 8）个 worker，每个有容量 `worker-queue`（默认 2 万）的队列。**同一台设备的消息（上行数据、`$SYS` 连接/断开事件）按 `productKey.deviceName` 固定落到同一个 worker**，所以“上线 → 数据 → 下线”的顺序不会乱。
+- 队列满：丢弃新消息并告警（每 1000 条提示一次），回调线程**不阻塞**。
+- 为什么必须这样：上行消息的处理会**同步发布回复**（等 EMQX 的 PUBACK），而这个 PUBACK 和入站消息走同一条 TCP。如果回调线程在等 PUBACK，读 socket 的线程又被已满的入站队列挡住（EMQX 单会话默认允许 32 条未确认消息，比 10 大），两边互相等待，连接像死了一样，直到心跳超时 Paho 重连——这段时间所有设备的上下线事件全部丢失，设备会一直显示在线。`ExternalGatewayBurstIT` 用一个会一次推 40 条消息的假 Broker 复现了这一点（修复前 40 条只回复 1 条）。
+- 阻塞调用（发布、订阅、连接）设置了 30 秒超时，不会永远挂住。
+
 ### 3.2 事件总线
 
 总线是接入层和各处理服务之间的唯一解耦点（`EventBus`）。消息种类（`MessageKind`）：`PROPERTY`、`EVENT`、`STATUS`、`COMMAND_REPLY`、`OTA_PROGRESS`、`SHADOW_GET`。订阅者以“组名”订阅，不同组各收到全部消息，同组多个节点分摊。
@@ -269,6 +278,7 @@ stateDiagram-v2
 | 位置 | 触发条件 | 丢什么 | 可观测 |
 | --- | --- | --- | --- |
 | 入口限流 | 单设备超过 50 条/秒 | 超限的上行消息 | 设备日志 |
+| 外部 Broker 接收队列 | 某个 worker 积压超过 `worker-queue` | 该 worker 上的新消息（含上下线事件） | 日志 |
 | 内存总线分区队列 | 某个订阅者处理太慢，队列满 | 该订阅者的消息 | `hyperiot_bus_dropped_total`、日志 |
 | 内存总线，平台重启 | 在途消息 | 队列里的消息 | — |
 | 时序写入队列 | 库不可用超过重试，或队列满 | 该批 / 新样本 | error 日志 |
@@ -286,6 +296,7 @@ stateDiagram-v2
 | `hyperiot.security.allow-plain-device-password` | `true` | 是否接受设备密钥本身作为 MQTT 密码 |
 | `hyperiot.access.online-announce-delay` | `1s` | MQTT 设备上线公告的延迟 |
 | `hyperiot.access.rate-limit-per-second` | `50` | 单设备上行限流（`0` 关闭） |
+| `hyperiot.mqtt.workers` / `worker-queue` | `8` / `20000` | 外部 Broker 模式下处理上行和上下线事件的线程数、每线程队列容量 |
 | `hyperiot.bus.type` | `memory` | `memory` 或 `kafka` |
 | `hyperiot.bus.partitions` / `queue-size` | `4` / `20000` | 内存总线每订阅者的分区数、每分区队列容量 |
 | `hyperiot.telemetry.batch-size` / `flush-interval` | `500` / `500ms` | 时序批量写入 |
